@@ -16,11 +16,65 @@ bilibili:
     source: youtube
 
 channels:
-  - name: Veritasium
-    yt_channel_id: UCHnyfMqiRRG1u-2MsSQLbXA
-    bili_tags: ["科普", "物理", "科学"]
-    bili_tid: 36
-    title_prefix: "【Veritasium】"
+  - name: Spike
+    yt_channel_id: UCDK_xfjSLNkgG9NBx6XNBFw
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【Spike】"
     enabled: true
 
+  - name: ❄️Pika❄️
+    yt_channel_id: UCL_HLSabjn3dwf3R8JBJ45w
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【❄️Pika❄️】"
+    enabled: true
 
+  - name: Hyra
+    yt_channel_id: UCU1Ag9C12YZFKY2HpNJr_3Q
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【Hyra】"
+    enabled: true
+
+  - name: Lex
+    yt_channel_id: UC4yh9rj_cPT77it63N14HQg
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【Lex】"
+    enabled: true
+
+  - name: SpenLC
+    yt_channel_id: UCsuS8BRN4y6_QoBvAqTtSSg
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【SpenLC】"
+    enabled: true
+
+  - name: Brawl Stars
+    yt_channel_id: UCooVYzDxdwTtGYAkcPmOgOw
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【Brawl Stars】"
+    enabled: true  
+
+  - name: CryingMan
+    yt_channel_id: UCGShu88Lh2ZAtXX0qbV9fXA
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【CryingMan】"
+    enabled: true
+
+  - name: iRayyQu🖤
+    yt_channel_id: UCVjgSCVQ_TNz_A-K3Q8f2YA
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【iRayyQu】"
+    enabled: true
+
+  - name: Anil14
+    yt_channel_id: UCPUqwlQ_nM22OhP36Dd8K-Q
+    bili_tags: ["荒野乱斗"]
+    bili_tid: 4
+    title_prefix: "【Anil14】"
+    enabled: true
