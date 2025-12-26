@@ -1,0 +1,26 @@
+global:
+  poll_interval: 60 #秒
+  download_dir: ./downloads
+  temp_dir: ./temp
+  log_level: INFO
+  max_retry: 3
+
+  ai:
+    provider: deepseek
+    model: chat
+
+bilibili:
+  cookies: ./cookies.json
+  upload:
+    copyright: 2
+    source: youtube
+
+channels:
+  - name: Veritasium
+    yt_channel_id: UCHnyfMqiRRG1u-2MsSQLbXA
+    bili_tags: ["科普", "物理", "科学"]
+    bili_tid: 36
+    title_prefix: "【Veritasium】"
+    enabled: true
+
+
