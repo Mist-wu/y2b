@@ -6,3 +6,7 @@ class TranslatorService:
             return prefix + translate_title(title)
         except Exception:
             return prefix + title
+
+if __name__ == "__main__":
+    service = TranslatorService()
+    print(service.translate("Test Video Title", "【Prefix】"))
