@@ -1,7 +1,8 @@
 global:
   poll_interval: 60 #秒
   download_dir: ./downloads
-  log_level: INFO
+  log_dir: ./logs
+  state_db: ./data/state.db
   max_retry: 3
 
   ai:
