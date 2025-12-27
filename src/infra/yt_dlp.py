@@ -1,7 +1,7 @@
 import subprocess
 import json
 
-def fetch_channel_videos(channel_id: str, limit=5):
+def fetch_channel_videos(channel_id: str, limit=3):
     cmd = [
         "yt-dlp",
         f"https://www.youtube.com/channel/{channel_id}",
