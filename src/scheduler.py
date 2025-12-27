@@ -21,20 +21,36 @@ class Scheduler:
                 if not channel.enabled:
                     continue
 
-                videos = self.monitor.get_new_videos(channel, self.state)
+                try:
+                    videos = self.monitor.get_new_videos(channel, self.state)
+                except Exception as e:
+                    self.logger.error(f"Failed to fetch videos for {channel.name}: {e}")
+                    continue
+
                 for v in videos:
-                    vid = v["id"]
-                    try:
-                        self.logger.info(f"processing {vid}")
-                        path = self.downloader.download(v, self.config.download_dir)
-                        self.state.mark_downloaded(vid)
-
-                        title = self.translator.translate(v["title"], channel.title_prefix)
-                        bvid = self.uploader.upload(path, title, v, channel)
-
-                        self.state.mark_uploaded(vid, bvid)
-                    except Exception as e:
-                        self.logger.error(f"{vid} failed: {e}")
-                        self.state.mark_failed(vid, str(e))
+                    self.process_video(v, channel)
 
             time.sleep(self.config.poll_interval)
+
+    def process_video(self, video, channel):
+        vid = video["id"]
+        for attempt in range(1, self.config.max_retry + 1):
+            try:
+                self.logger.info(f"processing {vid} (Attempt {attempt}/{self.config.max_retry})")
+                
+                path = self.downloader.download(video, self.config.download_dir)
+                self.state.mark_downloaded(vid)
+
+                title = self.translator.translate(video["title"], channel.title_prefix)
+                bvid = self.uploader.upload(path, title, video, channel)
+
+                self.state.mark_uploaded(vid, bvid)
+                return  # 成功后直接返回，结束重试循环
+
+            except Exception as e:
+                self.logger.error(f"{vid} failed attempt {attempt}: {e}")
+                
+                if attempt == self.config.max_retry:
+                    self.state.mark_failed(vid, str(e))
+                else:
+                    time.sleep(5)

@@ -1,7 +1,6 @@
 global:
   poll_interval: 60 #秒
   download_dir: ./downloads
-  temp_dir: ./temp
   log_level: INFO
   max_retry: 3
 

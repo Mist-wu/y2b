@@ -17,6 +17,7 @@ class AppConfig:
     download_dir: str
     log_dir: str
     state_db: str
+    max_retry: int  
     channels: list
 
 def load_config() -> AppConfig:
@@ -32,5 +33,6 @@ def load_config() -> AppConfig:
         download_dir=raw["global"]["download_dir"],
         log_dir=raw["global"]["log_dir"],
         state_db=raw["global"]["state_db"],
+        max_retry=raw["global"].get("max_retry", 3),  
         channels=channels
     )
