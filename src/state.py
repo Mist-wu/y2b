@@ -29,6 +29,9 @@ class StateRepository:
     def mark_downloaded(self, video_id: str):
         self._upsert(video_id, "downloaded")
 
+    def mark_skipped(self, video_id: str):
+        self._upsert(video_id, "skipped")
+
     def mark_uploaded(self, video_id: str, bvid: str):
         self._upsert(video_id, "uploaded", bvid=bvid)
 
