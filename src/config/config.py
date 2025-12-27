@@ -19,6 +19,7 @@ class AppConfig:
     state_db: str
     max_retry: int  
     channels: list
+    bilibili_cookies: str  
 
 def load_config() -> AppConfig:
     with open(Path(__file__).parent / "config.yaml", "r", encoding="utf-8") as f:
@@ -34,5 +35,6 @@ def load_config() -> AppConfig:
         log_dir=raw["global"]["log_dir"],
         state_db=raw["global"]["state_db"],
         max_retry=raw["global"].get("max_retry", 3),  
-        channels=channels
+        channels=channels,
+        bilibili_cookies=raw["bilibili"]["cookies"]  
     )

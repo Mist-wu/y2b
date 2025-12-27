@@ -13,7 +13,7 @@ class Scheduler:
         self.monitor = MonitorService()
         self.downloader = DownloaderService()
         self.translator = TranslatorService()
-        self.uploader = UploaderService()
+        self.uploader = UploaderService(config)  
 
     def run(self):
         while True:
@@ -45,7 +45,7 @@ class Scheduler:
                 bvid = self.uploader.upload(path, title, video, channel)
 
                 self.state.mark_uploaded(vid, bvid)
-                return  # 成功后直接返回，结束重试循环
+                return  
 
             except Exception as e:
                 self.logger.error(f"{vid} failed attempt {attempt}: {e}")
