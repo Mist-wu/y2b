@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 
-# 确保能加载 src 模块
 sys.path.append(str(Path(__file__).parent))
 
 from src.config.config import load_config, ChannelConfig
@@ -17,7 +16,6 @@ def run_quick_test():
     logger = setup_logger(config.log_dir)
     state = StateRepository(config.state_db)
     
-    # 2. 定义测试目标 (使用你提供的 Channel ID)
     test_channel = ChannelConfig(
         name="Test_Quick",
         yt_channel_id="UCuudpdbKmQWq2PPzYgVCWlA",

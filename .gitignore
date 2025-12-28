@@ -13,3 +13,9 @@ wheels/
 .env
 cookies.json
 www.youtube.com_cookies.txt
+
+# Logs and databases
+*.log
+*.db
+*.sqlite3
+uv.lock
