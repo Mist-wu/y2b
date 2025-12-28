@@ -8,7 +8,6 @@ def upload(video_path: str, title: str, desc: str, tags: list, tid: int, user_co
         "--desc", desc,
         "--tag", ",".join(tags),
         "--tid", str(tid),
-        "--user-cookie", user_cookie  
     ]
     subprocess.run(cmd, check=True)
     return "BV_FAKE_ID"

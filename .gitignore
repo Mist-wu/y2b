@@ -12,3 +12,4 @@ wheels/
 # Environment variable files
 .env
 cookies.json
+www.youtube.com_cookies.txt
