@@ -23,7 +23,7 @@ def run_quick_test():
         yt_channel_id="UCuudpdbKmQWq2PPzYgVCWlA",
         bili_tags=["测试"],
         bili_tid=174, # 生活分区
-        title_prefix="【自动转载测试】",
+        title_prefix="【测试】",
         enabled=True
     )
 
