@@ -1,5 +1,9 @@
-import time
+import sys
 from pathlib import Path
+
+# 确保能加载 src 模块
+sys.path.append(str(Path(__file__).parent))
+
 from src.config.config import load_config, ChannelConfig
 from src.logger import setup_logger
 from src.state import StateRepository
@@ -7,19 +11,19 @@ from src.infra.yt_dlp import fetch_channel_videos, download_video
 from src.service.translator import TranslatorService
 from src.service.uploader import UploaderService
 
-def test_latest_sequential_repost():
-    # 1. 初始化配置与服务
+def run_quick_test():
+    # 1. 加载配置与初始化环境
     config = load_config()
     logger = setup_logger(config.log_dir)
     state = StateRepository(config.state_db)
     
-    # 定义目标频道
+    # 2. 定义测试目标 (使用你提供的 Channel ID)
     test_channel = ChannelConfig(
-        name="Test_Channel",
+        name="Test_Quick",
         yt_channel_id="UCuudpdbKmQWq2PPzYgVCWlA",
         bili_tags=["测试"],
-        bili_tid=174, 
-        title_prefix="【最新测试】",
+        bili_tid=174, # 生活分区
+        title_prefix="【自动转载测试】",
         enabled=True
     )
 
@@ -27,43 +31,50 @@ def test_latest_sequential_repost():
     uploader = UploaderService(config)
 
     try:
-        # 2. 获取视频列表 (使用较小的 limit 以免卡顿，fetch_channel_videos 应已加入 --flat-playlist)
-        logger.info(f"正在获取频道 {test_channel.yt_channel_id} 的最新视频列表...")
-        videos = fetch_channel_videos(test_channel.yt_channel_id, limit=20) 
+        # 3. 抓取最新视频列表 (limit设小以防卡顿)
+        logger.info(f"正在获取频道 {test_channel.yt_channel_id} 的最新视频...")
+        # 建议确保 src/infra/yt_dlp.py 中已添加 --flat-playlist 参数
+        videos = fetch_channel_videos(test_channel.yt_channel_id, limit=5) 
         
-        # 3. 寻找“下一个”待转载视频
-        # videos 列表索引 0 是最新发布的，索引增大时间越久
+        # 4. 寻找第一个未处理的视频
         target_video = None
         for v in videos:
             if not state.exists(v["id"]):
                 target_video = v
-                break # 找到最新且未处理的一个，直接跳出循环
+                break
 
         if not target_video:
-            logger.info("当前列表中的视频已全部处理完毕。")
+            logger.info("未发现新视频，请手动删除 state.db 或更换测试频道。")
             return
 
         vid = target_video["id"]
-        logger.info(f"发现待处理的最新视频: {target_video['title']} (ID: {vid})")
+        logger.info(f"开始处理视频: {target_video['title']} (ID: {vid})")
 
-        # 4. 执行流水线
-        # 下载
+        # 5. 完整链路执行
+        # A. 下载
+        logger.info("步骤 1: 正在下载...")
         out_path = Path(config.download_dir) / f"{vid}.mp4"
         download_video(target_video["webpage_url"], str(out_path))
         state.mark_downloaded(vid)
         
-        # 翻译
+        # B. 翻译
+        logger.info("步骤 2: 正在调用 AI 翻译标题...")
         new_title = translator.translate(target_video["title"], test_channel.title_prefix)
+        logger.info(f"翻译结果: {new_title}")
         
-        # 上传
+        # C. 上传
+        logger.info("步骤 3: 正在上传至 Bilibili...")
         bvid = uploader.upload(out_path, new_title, target_video, test_channel)
         
-        # 5. 更新状态
+        # 6. 成功记录
         state.mark_uploaded(vid, bvid)
-        logger.info(f"转载成功！B站 BV号: {bvid}")
+        logger.info(f"测试圆满成功！B站视频号: {bvid}")
 
     except Exception as e:
-        logger.error(f"测试运行发生错误: {e}")
+        logger.error(f"测试失败，错误原因: {e}")
+        # 打印详细错误堆栈方便排查
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    test_latest_sequential_repost()
+    run_quick_test()
