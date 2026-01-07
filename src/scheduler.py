@@ -1,4 +1,6 @@
 import time
+import os
+from pathlib import Path
 from src.service.monitor import MonitorService
 from src.service.downloader import DownloaderService
 from src.service.translator import TranslatorService
@@ -35,27 +37,12 @@ class Scheduler:
 
             time.sleep(self.config.poll_interval)
 
-    def init_ignore_existing(self):
-        self.logger.info("正在初始化：扫描并忽略各频道当前已存在的视频...")
-        for channel in self.config.channels:
-            if not channel.enabled:
-                continue
-            
-            try:
-                videos = self.monitor.get_new_videos(channel, self.state)
-                for v in videos:
-                    self.state.mark_skipped(v["id"])
-                    self.logger.info(f"已忽略历史视频: {v['title']} (ID: {v['id']})")
-            except Exception as e:
-                self.logger.error(f"初始化频道 {channel.name} 失败: {e}")
-        
-        self.logger.info("初始化完成，开始监听新视频。")
-
     def process_video(self, video, channel):
         vid = video["id"]
+        path = None
         for attempt in range(1, self.config.max_retry + 1):
             try:
-                self.logger.info(f"processing {vid} (Attempt {attempt}/{self.config.max_retry})")
+                self.logger.info(f"processing {vid} (Attempt {attempt})")
                 
                 path = self.downloader.download(video, self.config.download_dir)
                 self.state.mark_downloaded(vid)
@@ -64,12 +51,19 @@ class Scheduler:
                 bvid = self.uploader.upload(path, title, video, channel)
 
                 self.state.mark_uploaded(vid, bvid)
-                return  
+                break # 成功则退出重试循环
 
             except Exception as e:
-                self.logger.error(f"{vid} failed attempt {attempt}: {e}")
-                
+                self.logger.error(f"{vid} attempt {attempt} failed: {e}")
                 if attempt == self.config.max_retry:
                     self.state.mark_failed(vid, str(e))
-                else:
-                    time.sleep(5)
+                time.sleep(5)
+            
+            finally:
+                # 无论成功还是最后一次重试失败，只要文件存在就清理
+                if path and Path(path).exists():
+                    try:
+                        os.remove(path)
+                        self.logger.info(f"Cleaned up: {path}")
+                    except:
+                        pass
