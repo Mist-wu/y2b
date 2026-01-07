@@ -48,8 +48,7 @@ def run_quick_test():
         vid = target_video["id"]
         logger.info(f"开始处理视频: {target_video['title']} (ID: {vid})")
 
-        # 5. 完整链路执行
-        # A. 下载
+
         logger.info("步骤 1: 正在下载...")
         out_path = Path(config.download_dir) / f"{vid}.mp4"
         download_video(target_video["webpage_url"], str(out_path))
