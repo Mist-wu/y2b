@@ -8,10 +8,6 @@ def resolve_cli(command: str) -> str | None:
     if cmd_path.is_file():
         return str(cmd_path)
 
-    found = shutil.which(command)
-    if found:
-        return found
-
     # Support running with `./.venv/bin/python main.py` (PATH may not include venv bin)
     bin_dir = Path(sys.executable).resolve().parent
     candidates = [
@@ -23,6 +19,10 @@ def resolve_cli(command: str) -> str | None:
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
+
+    found = shutil.which(command)
+    if found:
+        return found
     return None
 
 

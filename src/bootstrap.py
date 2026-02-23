@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.infra.cli_path import cli_exists
+from src.infra.cli_path import cli_exists, resolve_cli
 from src.infra.biliup import login as biliup_login
 from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH, probe_youtube_access
 
@@ -25,6 +25,7 @@ def prepare_runtime(config, logger):
         ],
     )
 
+    _ensure_youtube_po_token_provider(config, logger)
     _ensure_youtube_auth(config, logger)
     _ensure_bilibili_login(config, logger)
 
@@ -80,6 +81,7 @@ def _ensure_youtube_auth(config, logger):
             _guide_youtube_cookie_export(cookie_path, logger)
 
     _probe_youtube_or_retry(config, logger)
+    _verify_po_token_provider_if_enabled(config, logger)
 
 
 def _guide_youtube_cookie_export(cookie_path: Path, logger):
@@ -114,6 +116,7 @@ def _probe_youtube_or_retry(config, logger):
                 probe_channel_id,
                 cookies_path=yt_cfg.cookies,
                 cookies_from_browser=yt_cfg.cookies_from_browser,
+                extractor_args=yt_cfg.extractor_args,
             )
             logger.info("YouTube 认证探针校验成功")
             return
@@ -133,6 +136,71 @@ def _probe_youtube_or_retry(config, logger):
             answer = input("修复后按回车重试（输入 q 退出）: ").strip().lower()
             if answer == "q":
                 raise SystemExit("用户取消启动")
+
+
+def _ensure_youtube_po_token_provider(config, logger):
+    yt_cfg = config.youtube
+    if not yt_cfg.po_token_provider_enabled:
+        return
+
+    packages = [p for p in yt_cfg.po_token_provider_packages if str(p).strip()]
+    if not packages:
+        logger.warning(
+            "已启用 PO Token Provider plugin 模式，但未配置 global.youtube.po_token_provider_packages。"
+            " 将仅透传 extractor_args，不自动安装插件。"
+        )
+        return
+
+    logger.info(f"已启用 PO Token Provider plugin，插件包: {', '.join(packages)}")
+    if not yt_cfg.po_token_provider_auto_install:
+        logger.info("PO Token Provider plugin 自动安装已关闭（po_token_provider_auto_install=false）")
+        return
+
+    for pkg in packages:
+        logger.info(f"安装/升级 PO Token Provider plugin: {pkg}")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-U", pkg], check=True)
+
+
+def _verify_po_token_provider_if_enabled(config, logger):
+    yt_cfg = config.youtube
+    if not yt_cfg.po_token_provider_enabled or not yt_cfg.po_token_provider_verify:
+        return
+
+    yt_dlp_bin = resolve_cli("yt-dlp") or "yt-dlp"
+    # yt-dlp's own test video id; enough to trigger YouTube extractor verbose init and provider listing.
+    verify_url = "https://www.youtube.com/watch?v=BaW_jenozKc"
+    cmd = [
+        yt_dlp_bin,
+        "-v",
+        "--simulate",
+        "--no-playlist",
+        verify_url,
+        *_build_yt_probe_auth_args(yt_cfg),
+    ]
+    for item in yt_cfg.extractor_args or []:
+        text = str(item).strip()
+        if text:
+            cmd.extend(["--extractor-args", text])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        merged = "\n".join([result.stdout or "", result.stderr or ""])
+        if "PO Token Providers" in merged or "po_token" in merged.lower():
+            logger.info("PO Token Provider plugin verbose 校验完成（检测到相关输出）")
+        else:
+            logger.warning(
+                "已启用 PO Token Provider plugin 校验，但未在 yt-dlp verbose 输出中发现明显 provider 信息。"
+                " 这不一定表示失败，请结合实际下载日志判断。"
+            )
+    except Exception as e:
+        logger.warning(f"PO Token Provider plugin verbose 校验失败（忽略，不阻塞启动）: {e}")
+
+
+def _build_yt_probe_auth_args(yt_cfg) -> list[str]:
+    if yt_cfg.cookies_from_browser:
+        return ["--cookies-from-browser", str(yt_cfg.cookies_from_browser)]
+    if yt_cfg.cookies:
+        return ["--cookies", str(yt_cfg.cookies)]
+    return []
 
 
 def _ensure_bilibili_login(config, logger):

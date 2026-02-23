@@ -34,6 +34,11 @@ class YouTubeConfig:
     cookies: str = "./www.youtube.com_cookies.txt"
     cookies_from_browser: str | None = None
     probe_channel_id: str | None = None
+    extractor_args: list[str] = field(default_factory=list)
+    po_token_provider_enabled: bool = False
+    po_token_provider_auto_install: bool = False
+    po_token_provider_packages: list[str] = field(default_factory=list)
+    po_token_provider_verify: bool = False
 
 
 @dataclass
@@ -111,6 +116,13 @@ def load_config() -> AppConfig:
             cookies=youtube_raw.get("cookies", "./www.youtube.com_cookies.txt"),
             cookies_from_browser=youtube_raw.get("cookies_from_browser"),
             probe_channel_id=youtube_raw.get("probe_channel_id"),
+            extractor_args=[str(x) for x in youtube_raw.get("extractor_args", [])],
+            po_token_provider_enabled=bool(youtube_raw.get("po_token_provider_enabled", False)),
+            po_token_provider_auto_install=bool(youtube_raw.get("po_token_provider_auto_install", False)),
+            po_token_provider_packages=[
+                str(x) for x in youtube_raw.get("po_token_provider_packages", [])
+            ],
+            po_token_provider_verify=bool(youtube_raw.get("po_token_provider_verify", False)),
         ),
         ai=AIConfig(
             provider=ai_raw.get("provider", "deepseek"),

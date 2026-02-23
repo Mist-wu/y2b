@@ -20,10 +20,12 @@ class Scheduler:
         self.monitor = MonitorService(
             youtube_cookies_path=yt_cfg.cookies,
             youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
+            youtube_extractor_args=yt_cfg.extractor_args,
         )
         self.downloader = DownloaderService(
             youtube_cookies_path=yt_cfg.cookies,
             youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
+            youtube_extractor_args=yt_cfg.extractor_args,
         )
         self.translator = TranslatorService(config, logger)
         self.uploader = UploaderService(config)
@@ -41,6 +43,17 @@ class Scheduler:
             if remain <= 0:
                 return
             time.sleep(min(1, remain))
+
+    @staticmethod
+    def _format_size(num_bytes: int) -> str:
+        units = ["B", "KB", "MB", "GB", "TB"]
+        size = float(max(0, num_bytes))
+        for unit in units:
+            if size < 1024 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(size)}{unit}"
+                return f"{size:.1f}{unit}"
+            size /= 1024
 
     def run(self):
         self.logger.info(
@@ -88,19 +101,43 @@ class Scheduler:
 
         for attempt in range(1, self.config.max_retry + 1):
             try:
+                attempt_started = time.time()
                 self.logger.info(
                     f"开始处理 {vid} ({video.get('title')}) (尝试 {attempt}/{self.config.max_retry})"
                 )
 
                 self.state.mark_downloading(video)
-                out_path = self.downloader.download(video, self.config.download_dir)
+                self.logger.info(f"[{vid}] 开始下载 YouTube 视频...")
+                download_started = time.time()
+                out_path = self.downloader.download(video, self.config.download_dir, logger=self.logger)
+                download_cost = time.time() - download_started
+                file_size = 0
+                if out_path and Path(out_path).exists():
+                    file_size = Path(out_path).stat().st_size
+                self.logger.info(
+                    f"[{vid}] 下载完成: {out_path} "
+                    f"(大小={self._format_size(file_size)}, 耗时={download_cost:.1f}s)"
+                )
                 self.state.mark_downloaded(video)
 
+                self.logger.info(f"[{vid}] 开始翻译标题...")
+                translate_started = time.time()
                 title = self.translator.translate(video["title"], channel.title_prefix)
+                self.logger.info(
+                    f"[{vid}] 标题处理完成 (耗时={time.time() - translate_started:.1f}s): {title}"
+                )
+
+                self.logger.info(f"[{vid}] 开始上传到 Bilibili...")
+                upload_started = time.time()
                 bvid = self.uploader.upload(out_path, title, video, channel)
+                self.logger.info(
+                    f"[{vid}] 上传完成: {bvid} (耗时={time.time() - upload_started:.1f}s)"
+                )
 
                 self.state.mark_uploaded(video, bvid)
-                self.logger.info(f"视频 {vid} 搬运成功: {bvid}")
+                self.logger.info(
+                    f"视频 {vid} 搬运成功: {bvid} (总耗时={time.time() - attempt_started:.1f}s)"
+                )
                 return
 
             except KeyboardInterrupt:

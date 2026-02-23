@@ -106,6 +106,7 @@ def run_single_chain_test(target_channel_id: str, *, scan_limit: int | None = No
         target_channel_id,
         cookies_path=config.youtube.cookies,
         cookies_from_browser=config.youtube.cookies_from_browser,
+        extractor_args=config.youtube.extractor_args,
     )
     logger.info(f"目标频道 YouTube 认证探针校验成功: {target_channel_id}")
     state = StateRepository(config.state_db)

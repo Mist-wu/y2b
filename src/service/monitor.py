@@ -17,9 +17,16 @@ NON_PUBLIC_AVAILABILITY = {
 
 
 class MonitorService:
-    def __init__(self, *, youtube_cookies_path: str | None, youtube_cookies_from_browser: str | None):
+    def __init__(
+        self,
+        *,
+        youtube_cookies_path: str | None,
+        youtube_cookies_from_browser: str | None,
+        youtube_extractor_args: list[str] | None = None,
+    ):
         self.youtube_cookies_path = youtube_cookies_path
         self.youtube_cookies_from_browser = youtube_cookies_from_browser
+        self.youtube_extractor_args = youtube_extractor_args or []
 
     def get_new_videos(self, channel, state, *, startup_ts: int, scan_limit: int, logger=None):
         raw_heads = self._fetch_with_backfill(channel.yt_channel_id, scan_limit=scan_limit)
@@ -82,6 +89,7 @@ class MonitorService:
                 playlist_start=playlist_start,
                 cookies_path=self.youtube_cookies_path,
                 cookies_from_browser=self.youtube_cookies_from_browser,
+                extractor_args=self.youtube_extractor_args,
             )
             if not page:
                 break
@@ -101,6 +109,7 @@ class MonitorService:
             str(url),
             cookies_path=self.youtube_cookies_path,
             cookies_from_browser=self.youtube_cookies_from_browser,
+            extractor_args=self.youtube_extractor_args,
         )
         # 补齐平铺列表里可能带的字段（有些情况下详情缺失）
         for k, v in head.items():

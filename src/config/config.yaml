@@ -20,6 +20,22 @@ global:
     # cookies_from_browser: edge
     # 用于启动时探针校验 cookies 是否真的可用；为空时自动取第一个启用频道
     probe_channel_id:
+    # 透传给 yt-dlp 的 --extractor-args（可多项）
+    # 例如启用 PO Token Provider plugin（WPC）后可加：
+    # extractor_args:
+    #   - "youtubepot-wpc:browser=edge"
+    extractor_args: []
+    # PO Token Provider plugin（推荐在频繁 403 / m3u8 分片下载失败时启用）
+    # Windows 可尝试: yt-dlp-getpot-wpc（通常需可交互浏览器）
+    # Ubuntu 24 长期运行建议结合 bgutil provider（按 README 配置）
+    po_token_provider_enabled: false
+    # true 时，启动自动执行 pip 安装/升级插件包（安装到当前 Python/venv）
+    po_token_provider_auto_install: false
+    # 可填一个或多个插件包名，例如：
+    # - yt-dlp-getpot-wpc
+    po_token_provider_packages: []
+    # true 时，启动将尝试做一次 verbose 校验并输出是否发现 PO Token provider
+    po_token_provider_verify: false
 
   translation:
     max_title_length: 70
