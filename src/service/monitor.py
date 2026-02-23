@@ -4,6 +4,11 @@ import datetime as dt
 import time
 from typing import Any
 
+from src.infra.youtube_api import (
+    fetch_upload_playlist_items,
+    get_uploads_playlist_id,
+    normalize_playlist_item,
+)
 from src.infra.yt_dlp import fetch_channel_video_heads, fetch_video_metadata
 
 
@@ -20,15 +25,60 @@ class MonitorService:
     def __init__(
         self,
         *,
+        monitor_backend: str = "yt_dlp",
+        youtube_api_key_env: str = "YOUTUBE_DATA_API_KEY",
         youtube_cookies_path: str | None,
         youtube_cookies_from_browser: str | None,
         youtube_extractor_args: list[str] | None = None,
     ):
+        self.monitor_backend = (monitor_backend or "yt_dlp").lower()
+        self.youtube_api_key_env = youtube_api_key_env
         self.youtube_cookies_path = youtube_cookies_path
         self.youtube_cookies_from_browser = youtube_cookies_from_browser
         self.youtube_extractor_args = youtube_extractor_args or []
+        self._uploads_playlist_cache: dict[str, str] = {}
 
     def get_new_videos(self, channel, state, *, startup_ts: int, scan_limit: int, logger=None):
+        if self.monitor_backend == "youtube_api":
+            return self._get_new_videos_from_api(channel, state, startup_ts=startup_ts, scan_limit=scan_limit)
+        return self._get_new_videos_from_ytdlp(channel, state, startup_ts=startup_ts, scan_limit=scan_limit)
+
+    def _get_new_videos_from_api(self, channel, state, *, startup_ts: int, scan_limit: int):
+        raw_entries = self._fetch_api_entries(channel.yt_channel_id, scan_limit=scan_limit)
+        results: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for raw in raw_entries:
+            video = self._normalize_api_item(raw, channel.yt_channel_id)
+            if video is None:
+                continue
+            video_id = video["id"]
+            if video_id in seen_ids:
+                continue
+            seen_ids.add(video_id)
+
+            status = state.get_status(video_id)
+            if status and not state.can_process(video_id):
+                continue
+
+            published_ts = video.get("published_ts")
+            if published_ts is None:
+                if state.can_process(video_id):
+                    state.mark_skipped_filtered(video, "missing_published_time")
+                continue
+
+            if published_ts <= startup_ts:
+                if state.can_process(video_id):
+                    state.mark_skipped_before_start(video)
+                continue
+
+            if state.can_process(video_id):
+                results.append(video)
+
+        results.sort(key=lambda v: (v.get("published_ts") or 0, v["id"]))
+        return results
+
+    def _get_new_videos_from_ytdlp(self, channel, state, *, startup_ts: int, scan_limit: int):
         raw_heads = self._fetch_with_backfill(channel.yt_channel_id, scan_limit=scan_limit)
         results: list[dict[str, Any]] = []
         now_ts = int(time.time())
@@ -73,6 +123,17 @@ class MonitorService:
 
         results.sort(key=lambda v: (v.get("published_ts") or 0, v["id"]))
         return results
+
+    def _fetch_api_entries(self, channel_id: str, *, scan_limit: int) -> list[dict]:
+        uploads_playlist_id = self._uploads_playlist_cache.get(channel_id)
+        if not uploads_playlist_id:
+            uploads_playlist_id = get_uploads_playlist_id(channel_id, api_key_env=self.youtube_api_key_env)
+            self._uploads_playlist_cache[channel_id] = uploads_playlist_id
+        return fetch_upload_playlist_items(
+            uploads_playlist_id,
+            api_key_env=self.youtube_api_key_env,
+            max_results=max(1, min(scan_limit, 50)),
+        )
 
     def _fetch_with_backfill(self, channel_id: str, *, scan_limit: int) -> list[dict]:
         # Page through recent uploads to reduce miss risk when a channel posts several videos between polls.
@@ -137,6 +198,9 @@ class MonitorService:
             "live_status": raw.get("live_status"),
             "is_live": raw.get("is_live"),
         }
+
+    def _normalize_api_item(self, raw: dict[str, Any], channel_id: str) -> dict[str, Any] | None:
+        return normalize_playlist_item(raw, fallback_channel_id=channel_id)
 
     def _extract_published_ts(self, raw: dict[str, Any]) -> int | None:
         for key in ("release_timestamp", "timestamp"):

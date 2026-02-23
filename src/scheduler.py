@@ -18,6 +18,8 @@ class Scheduler:
         yt_cfg = self.config.youtube
 
         self.monitor = MonitorService(
+            monitor_backend=getattr(self.config, "monitor_backend", "yt_dlp"),
+            youtube_api_key_env=yt_cfg.api_key_env,
             youtube_cookies_path=yt_cfg.cookies,
             youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
             youtube_extractor_args=yt_cfg.extractor_args,

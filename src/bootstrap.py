@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.infra.cli_path import cli_exists, resolve_cli
 from src.infra.biliup import login as biliup_login
+from src.infra.youtube_api import probe_youtube_data_api_access
 from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH, probe_youtube_access
 
 
@@ -26,7 +27,12 @@ def prepare_runtime(config, logger):
     )
 
     _ensure_youtube_po_token_provider(config, logger)
-    _ensure_youtube_auth(config, logger)
+    if _uses_youtube_api_monitor(config):
+        _ensure_youtube_data_api(config, logger)
+        logger.info("监控后端为 YouTube Data API，跳过 yt-dlp 的 YouTube 启动认证探针（下载阶段仍可能按需使用 cookies/PO Token）")
+        _verify_po_token_provider_if_enabled(config, logger)
+    else:
+        _ensure_youtube_auth(config, logger)
     _ensure_bilibili_login(config, logger)
 
 
@@ -82,6 +88,30 @@ def _ensure_youtube_auth(config, logger):
 
     _probe_youtube_or_retry(config, logger)
     _verify_po_token_provider_if_enabled(config, logger)
+
+
+def _uses_youtube_api_monitor(config) -> bool:
+    return str(getattr(config, "monitor_backend", "yt_dlp")).lower() == "youtube_api"
+
+
+def _ensure_youtube_data_api(config, logger):
+    yt_cfg = config.youtube
+    logger.info(f"YouTube 监控方式: YouTube Data API (env={yt_cfg.api_key_env})")
+    probe_channel_id = _pick_probe_channel_id(config)
+    try:
+        probe_youtube_data_api_access(probe_channel_id, api_key_env=yt_cfg.api_key_env)
+        logger.info("YouTube Data API 探针校验成功")
+    except Exception as e:
+        if not _is_interactive():
+            raise RuntimeError(
+                f"YouTube Data API 探针失败，请检查环境变量 {yt_cfg.api_key_env} 是否存在且 API 已启用: {e}"
+            ) from e
+        logger.error(f"YouTube Data API 探针失败: {e}")
+        print("\n[YouTube Data API 探针失败处理]")
+        print(f"1. 确认环境变量 {yt_cfg.api_key_env} 已在当前终端会话中设置")
+        print("2. 确认 Google Cloud 已启用 YouTube Data API v3")
+        print("3. 确认 API key 未限制错误（服务限制/IP限制）")
+        raise
 
 
 def _guide_youtube_cookie_export(cookie_path: Path, logger):

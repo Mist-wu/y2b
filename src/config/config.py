@@ -31,6 +31,7 @@ class TranslationConfig:
 
 @dataclass
 class YouTubeConfig:
+    api_key_env: str = "YOUTUBE_DATA_API_KEY"
     cookies: str = "./www.youtube.com_cookies.txt"
     cookies_from_browser: str | None = None
     probe_channel_id: str | None = None
@@ -58,6 +59,7 @@ class BilibiliConfig:
 
 @dataclass
 class AppConfig:
+    monitor_backend: str
     poll_interval: int
     monitor_scan_limit: int
     download_dir: str
@@ -105,6 +107,7 @@ def load_config() -> AppConfig:
     ]
 
     return AppConfig(
+        monitor_backend=str(global_cfg.get("monitor_backend", "yt_dlp")).strip().lower() or "yt_dlp",
         poll_interval=global_cfg["poll_interval"],
         monitor_scan_limit=global_cfg.get("monitor_scan_limit", 20),
         download_dir=global_cfg["download_dir"],
@@ -113,6 +116,7 @@ def load_config() -> AppConfig:
         max_retry=global_cfg.get("max_retry", 3),
         channels=channels,
         youtube=YouTubeConfig(
+            api_key_env=youtube_raw.get("api_key_env", "YOUTUBE_DATA_API_KEY"),
             cookies=youtube_raw.get("cookies", "./www.youtube.com_cookies.txt"),
             cookies_from_browser=youtube_raw.get("cookies_from_browser"),
             probe_channel_id=youtube_raw.get("probe_channel_id"),

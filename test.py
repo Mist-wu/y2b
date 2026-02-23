@@ -8,6 +8,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from src.config.config import load_config, ChannelConfig
 from src.bootstrap import prepare_runtime
+from src.infra.youtube_api import probe_youtube_data_api_access
 from src.infra.yt_dlp import probe_youtube_access
 from src.logger import setup_logger
 from src.state import StateRepository
@@ -32,6 +33,34 @@ def _resolve_channel_config(config, logger, target_channel_id: str) -> ChannelCo
 
 def _pick_latest_unuploaded_video(scheduler: Scheduler, channel_cfg: ChannelConfig, state, logger, *, scan_limit: int):
     monitor = scheduler.monitor
+    if getattr(monitor, "monitor_backend", "yt_dlp") == "youtube_api":
+        raw_entries = monitor._fetch_api_entries(channel_cfg.yt_channel_id, scan_limit=scan_limit)
+        logger.info(f"测试模式扫描频道最近 {len(raw_entries)} 条 API 候选视频（scan_limit={scan_limit}）")
+        for idx, raw in enumerate(raw_entries, start=1):
+            video = monitor._normalize_api_item(raw, channel_cfg.yt_channel_id)
+            if video is None:
+                logger.info(f"[{idx}] 跳过候选，原因: invalid_api_item")
+                continue
+            status = state.get_status(video["id"])
+            if status == "uploaded":
+                logger.info(f"[{idx}] 跳过已上传视频 {video['id']}")
+                continue
+            if status and not state.can_process(video["id"]):
+                logger.info(f"[{idx}] 跳过视频 {video['id']}（状态={status}）")
+                continue
+            if not video.get("webpage_url"):
+                logger.info(f"[{idx}] 跳过 {video['id']}，原因: missing_webpage_url")
+                continue
+            if not isinstance(video.get("published_ts"), int) or (video.get("published_ts") or 0) <= 0:
+                logger.info(f"[{idx}] 跳过 {video['id']}，原因: missing_published_time")
+                continue
+            if status:
+                logger.info(f"[{idx}] 选择视频 {video['id']}（历史状态={status}，将重跑测试链路）")
+            else:
+                logger.info(f"[{idx}] 选择视频 {video['id']}（未上传）")
+            return video
+        return None
+
     raw_heads = monitor._fetch_with_backfill(channel_cfg.yt_channel_id, scan_limit=scan_limit)
     if not raw_heads:
         return None
@@ -102,13 +131,18 @@ def run_single_chain_test(target_channel_id: str, *, scan_limit: int | None = No
     logger = setup_logger(config.log_dir)
     prepare_runtime(config, logger)
     # 测试脚本传入的是“指定频道”，因此需要对目标频道再次做详情探针，避免只验证了配置中的其他频道。
-    probe_youtube_access(
-        target_channel_id,
-        cookies_path=config.youtube.cookies,
-        cookies_from_browser=config.youtube.cookies_from_browser,
-        extractor_args=config.youtube.extractor_args,
-    )
-    logger.info(f"目标频道 YouTube 认证探针校验成功: {target_channel_id}")
+    backend = str(getattr(config, "monitor_backend", "yt_dlp")).lower()
+    if backend == "youtube_api":
+        probe_youtube_data_api_access(target_channel_id, api_key_env=config.youtube.api_key_env)
+        logger.info(f"目标频道 YouTube Data API 探针校验成功: {target_channel_id}")
+    else:
+        probe_youtube_access(
+            target_channel_id,
+            cookies_path=config.youtube.cookies,
+            cookies_from_browser=config.youtube.cookies_from_browser,
+            extractor_args=config.youtube.extractor_args,
+        )
+        logger.info(f"目标频道 YouTube 认证探针校验成功: {target_channel_id}")
     state = StateRepository(config.state_db)
 
     startup_cutoff_ts = int(time.time())

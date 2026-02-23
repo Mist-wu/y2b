@@ -1,5 +1,6 @@
 global:
-  poll_interval: 60 #秒
+  monitor_backend: youtube_api # youtube_api / yt_dlp
+  poll_interval: 120 #秒
   monitor_scan_limit: 50
   download_dir: ./downloads
   log_dir: ./logs
@@ -13,6 +14,7 @@ global:
     api_key_env: DEEPSEEK_API_KEY
 
   youtube:
+    api_key_env: YOUTUBE_DATA_API_KEY
     # 二选一：
     # 1) 使用导出的 Netscape cookies 文件（默认）
     cookies: ./www.youtube.com_cookies.txt
