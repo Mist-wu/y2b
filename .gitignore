@@ -5,16 +5,28 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
-.venv
+.venv/
 
 # Environment variable files
 .env
 cookies.json
 www.youtube.com_cookies.txt
 
-# Logs and databases
+# Runtime outputs
+logs/
+download/
+downloads/
+*.log
 
-Logs/*.log
+# Databases and state
 data/*.db
+data/*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
