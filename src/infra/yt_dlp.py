@@ -36,20 +36,35 @@ def probe_youtube_access(
     cookies_path: str | None = YOUTUBE_COOKIES_PATH,
     cookies_from_browser: str | None = None,
 ):
-    cmd = [
-        _yt_dlp_bin(),
-        f"https://www.youtube.com/channel/{channel_id}/videos",
-        "--flat-playlist",
-        "--dump-json",
-        "--playlist-end",
-        "1",
-        "--no-warnings",
-        "--ignore-errors",
-        *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
-    ]
-    result = _run_yt_dlp(cmd, action="探针校验")
-    if not (result.stdout or "").strip():
-        raise RuntimeError("探针未返回视频数据，可能是 cookies 无效或频道不可访问")
+    # Runtime path needs both channel list and per-video detail access.
+    # Only validating --flat-playlist can produce false positives.
+    heads = fetch_channel_video_heads(
+        channel_id,
+        limit=3,
+        playlist_start=1,
+        cookies_path=cookies_path,
+        cookies_from_browser=cookies_from_browser,
+    )
+    if not heads:
+        raise RuntimeError("探针未返回视频列表，可能是 cookies 无效或频道不可访问")
+
+    last_err: Exception | None = None
+    for head in heads:
+        video_id = str(head.get("id") or "").strip()
+        if not video_id:
+            continue
+        try:
+            fetch_video_metadata(
+                video_id,
+                cookies_path=cookies_path,
+                cookies_from_browser=cookies_from_browser,
+            )
+            return
+        except Exception as e:
+            last_err = e
+            continue
+
+    raise RuntimeError(f"探针无法通过视频详情校验: {last_err or 'no valid video id'}")
 
 
 def fetch_channel_video_heads(
