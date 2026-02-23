@@ -6,6 +6,10 @@ def setup_logger(log_dir: str) -> logging.Logger:
 
     logger = logging.getLogger("yt2bili")
     logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    if logger.handlers:
+        return logger
 
     fmt = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] %(message)s"

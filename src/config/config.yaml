@@ -1,5 +1,6 @@
 global:
   poll_interval: 60 #秒
+  monitor_scan_limit: 50
   download_dir: ./downloads
   log_dir: ./logs
   state_db: ./data/state.db
@@ -7,13 +8,26 @@ global:
 
   ai:
     provider: deepseek
-    model: chat
+    model: deepseek-chat
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+
+  translation:
+    max_title_length: 70
+    style_prompt: "适合B站的中文标题，简洁、自然、不夸张"
+    glossary:
+      Brawl Stars: 荒野乱斗
+      Hypercharge: 终极技能
 
 bilibili:
   cookies: ./cookies.json
+  executable: biliup
+  user_cookie_arg: -u
+  extra_args: []
   upload:
     copyright: 2
     source: youtube
+    line: AUTO
 
 channels:
   - name: Spike

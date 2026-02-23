@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from src.config.config import load_config, ChannelConfig
+from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH
 from src.logger import setup_logger
 from src.state import StateRepository
 from src.infra.yt_dlp import fetch_channel_videos, download_video
@@ -18,7 +19,7 @@ def run_specific_repost(target_channel_id: str):
     config = load_config()
     logger = setup_logger(config.log_dir)
     state = StateRepository(config.state_db)
-    translator = TranslatorService()
+    translator = TranslatorService(config, logger)
     uploader = UploaderService(config)
 
     # 2. 匹配频道配置
@@ -58,8 +59,8 @@ def run_specific_repost(target_channel_id: str):
 
         # A. 下载
         out_path = Path(config.download_dir) / f"{vid}.mp4"
-        download_video(video["webpage_url"], str(out_path))
-        state.mark_downloaded(vid)
+        download_video(video["webpage_url"], str(out_path), cookies_path=YOUTUBE_COOKIES_PATH)
+        state.mark_downloaded(video)
 
         # B. 翻译
         new_title = translator.translate(video["title"], channel_cfg.title_prefix)
@@ -67,7 +68,7 @@ def run_specific_repost(target_channel_id: str):
         # C. 上传
         bvid = uploader.upload(out_path, new_title, video, channel_cfg)
         
-        state.mark_uploaded(vid, bvid)
+        state.mark_uploaded(video, bvid)
         logger.info(f"成功！B站 ID: {bvid}")
 
     except Exception as e:
