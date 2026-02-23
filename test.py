@@ -7,10 +7,9 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from src.config.config import load_config, ChannelConfig
-from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH
 from src.logger import setup_logger
 from src.state import StateRepository
-from src.infra.yt_dlp import fetch_channel_videos, download_video
+from src.infra.yt_dlp import download_video, fetch_channel_video_heads, fetch_video_metadata
 from src.service.translator import TranslatorService
 from src.service.uploader import UploaderService
 
@@ -41,7 +40,22 @@ def run_specific_repost(target_channel_id: str):
     try:
         # 3. 获取最新视频
         logger.info(f"正在获取频道 {target_channel_id} 的最新视频...")
-        videos = fetch_channel_videos(channel_cfg.yt_channel_id, limit=1)
+        # 轻量拉取频道列表后，再获取最新一条完整详情
+        yt_cfg = config.youtube
+        heads = fetch_channel_video_heads(
+            channel_cfg.yt_channel_id,
+            limit=1,
+            cookies_path=yt_cfg.cookies,
+            cookies_from_browser=yt_cfg.cookies_from_browser,
+        )
+        videos = []
+        if heads:
+            head = heads[0]
+            videos = [fetch_video_metadata(
+                str(head.get("id") or head.get("url") or ""),
+                cookies_path=yt_cfg.cookies,
+                cookies_from_browser=yt_cfg.cookies_from_browser,
+            )]
         
         if not videos:
             logger.error("未找到任何视频。")
@@ -59,7 +73,12 @@ def run_specific_repost(target_channel_id: str):
 
         # A. 下载
         out_path = Path(config.download_dir) / f"{vid}.mp4"
-        download_video(video["webpage_url"], str(out_path), cookies_path=YOUTUBE_COOKIES_PATH)
+        download_video(
+            video["webpage_url"],
+            str(out_path),
+            cookies_path=config.youtube.cookies,
+            cookies_from_browser=config.youtube.cookies_from_browser,
+        )
         state.mark_downloaded(video)
 
         # B. 翻译

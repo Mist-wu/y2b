@@ -2,7 +2,6 @@ import os
 import time
 from pathlib import Path
 
-from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH
 from src.service.downloader import DownloaderService
 from src.service.monitor import MonitorService
 from src.service.translator import TranslatorService
@@ -15,9 +14,16 @@ class Scheduler:
         self.logger = logger
         self.state = state
         self.startup_ts = self.state.set_run_startup_ts(startup_cutoff_ts)
+        yt_cfg = self.config.youtube
 
-        self.monitor = MonitorService(youtube_cookies_path=YOUTUBE_COOKIES_PATH)
-        self.downloader = DownloaderService(youtube_cookies_path=YOUTUBE_COOKIES_PATH)
+        self.monitor = MonitorService(
+            youtube_cookies_path=yt_cfg.cookies,
+            youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
+        )
+        self.downloader = DownloaderService(
+            youtube_cookies_path=yt_cfg.cookies,
+            youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
+        )
         self.translator = TranslatorService(config, logger)
         self.uploader = UploaderService(config)
 

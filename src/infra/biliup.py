@@ -2,6 +2,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from src.infra.cli_path import resolve_cli
 
 BV_PATTERN = re.compile(r"\bBV[0-9A-Za-z]+\b")
 
@@ -19,9 +20,10 @@ def upload(
     upload_cfg,
     extra_args: list[str] | None = None,
 ) -> str:
+    resolved_exec = resolve_cli(executable) or executable
     cookie_path = str(Path(user_cookie))
     cmd = [
-        executable,
+        resolved_exec,
         user_cookie_arg,
         cookie_path,
         "upload",
@@ -58,6 +60,7 @@ def upload(
 
 
 def login(executable: str, user_cookie_arg: str, user_cookie: str):
+    resolved_exec = resolve_cli(executable) or executable
     cookie_path = str(Path(user_cookie))
-    cmd = [executable, user_cookie_arg, cookie_path, "login"]
+    cmd = [resolved_exec, user_cookie_arg, cookie_path, "login"]
     subprocess.run(cmd, check=True)

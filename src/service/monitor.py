@@ -4,7 +4,7 @@ import datetime as dt
 import time
 from typing import Any
 
-from src.infra.yt_dlp import fetch_channel_videos
+from src.infra.yt_dlp import fetch_channel_video_heads, fetch_video_metadata
 
 
 NON_PUBLIC_AVAILABILITY = {
@@ -17,22 +17,32 @@ NON_PUBLIC_AVAILABILITY = {
 
 
 class MonitorService:
-    def __init__(self, *, youtube_cookies_path: str | None):
+    def __init__(self, *, youtube_cookies_path: str | None, youtube_cookies_from_browser: str | None):
         self.youtube_cookies_path = youtube_cookies_path
+        self.youtube_cookies_from_browser = youtube_cookies_from_browser
 
     def get_new_videos(self, channel, state, *, startup_ts: int, scan_limit: int, logger=None):
-        raw_videos = self._fetch_with_backfill(channel.yt_channel_id, scan_limit=scan_limit)
+        raw_heads = self._fetch_with_backfill(channel.yt_channel_id, scan_limit=scan_limit)
         results: list[dict[str, Any]] = []
         now_ts = int(time.time())
         seen_ids: set[str] = set()
 
-        for raw in raw_videos:
+        for head in raw_heads:
+            video_id = str(head.get("id") or "").strip()
+            if not video_id:
+                continue
+            if video_id in seen_ids:
+                continue
+            seen_ids.add(video_id)
+
+            status = state.get_status(video_id)
+            if status and not state.can_process(video_id):
+                continue
+
+            raw = self._fetch_video_detail(head)
             video = self._normalize_video(raw, channel.yt_channel_id)
             if video is None:
                 continue
-            if video["id"] in seen_ids:
-                continue
-            seen_ids.add(video["id"])
 
             skip_reason = self._filter_reason(video, raw, now_ts)
             if skip_reason:
@@ -66,11 +76,12 @@ class MonitorService:
 
         while len(fetched) < max_total:
             need = min(page_size, max_total - len(fetched))
-            page = fetch_channel_videos(
+            page = fetch_channel_video_heads(
                 channel_id,
                 limit=need,
                 playlist_start=playlist_start,
                 cookies_path=self.youtube_cookies_path,
+                cookies_from_browser=self.youtube_cookies_from_browser,
             )
             if not page:
                 break
@@ -80,6 +91,21 @@ class MonitorService:
             playlist_start += need
 
         return fetched
+
+    def _fetch_video_detail(self, head: dict[str, Any]) -> dict[str, Any]:
+        video_id = str(head.get("id") or "").strip()
+        if not video_id:
+            return head
+        url = head.get("url") or head.get("webpage_url") or video_id
+        raw = fetch_video_metadata(
+            str(url),
+            cookies_path=self.youtube_cookies_path,
+            cookies_from_browser=self.youtube_cookies_from_browser,
+        )
+        # 补齐平铺列表里可能带的字段（有些情况下详情缺失）
+        for k, v in head.items():
+            raw.setdefault(k, v)
+        return raw
 
     def _normalize_video(self, raw: dict[str, Any], channel_id: str) -> dict[str, Any] | None:
         video_id = raw.get("id")

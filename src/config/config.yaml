@@ -12,6 +12,15 @@ global:
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
 
+  youtube:
+    # 二选一：
+    # 1) 使用导出的 Netscape cookies 文件（默认）
+    cookies: ./www.youtube.com_cookies.txt
+    # 2) 直接读取本机浏览器 cookies（Windows 更稳，推荐 edge/chrome）
+    # cookies_from_browser: edge
+    # 用于启动时探针校验 cookies 是否真的可用；为空时自动取第一个启用频道
+    probe_channel_id:
+
   translation:
     max_title_length: 70
     style_prompt: "适合B站的中文标题，简洁、自然、不夸张"

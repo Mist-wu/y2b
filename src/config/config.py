@@ -30,6 +30,13 @@ class TranslationConfig:
 
 
 @dataclass
+class YouTubeConfig:
+    cookies: str = "./www.youtube.com_cookies.txt"
+    cookies_from_browser: str | None = None
+    probe_channel_id: str | None = None
+
+
+@dataclass
 class BilibiliUploadConfig:
     copyright: int | None = None
     source: str | None = None
@@ -53,6 +60,7 @@ class AppConfig:
     state_db: str
     max_retry: int
     channels: list
+    youtube: YouTubeConfig
     ai: AIConfig
     translation: TranslationConfig
     bilibili: BilibiliConfig
@@ -82,6 +90,7 @@ def load_config() -> AppConfig:
 
     global_cfg = raw.get("global", {})
     ai_raw = global_cfg.get("ai", {})
+    youtube_raw = global_cfg.get("youtube", {})
     translation_raw = global_cfg.get("translation", {})
     bilibili_raw = raw.get("bilibili", {})
     bili_upload_raw = bilibili_raw.get("upload", {})
@@ -98,6 +107,11 @@ def load_config() -> AppConfig:
         state_db=global_cfg["state_db"],
         max_retry=global_cfg.get("max_retry", 3),
         channels=channels,
+        youtube=YouTubeConfig(
+            cookies=youtube_raw.get("cookies", "./www.youtube.com_cookies.txt"),
+            cookies_from_browser=youtube_raw.get("cookies_from_browser"),
+            probe_channel_id=youtube_raw.get("probe_channel_id"),
+        ),
         ai=AIConfig(
             provider=ai_raw.get("provider", "deepseek"),
             model=ai_raw.get("model", "deepseek-chat"),

@@ -3,8 +3,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.infra.cli_path import cli_exists
 from src.infra.biliup import login as biliup_login
-from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH
+from src.infra.yt_dlp import YOUTUBE_COOKIES_PATH, probe_youtube_access
 
 
 def prepare_runtime(config, logger):
@@ -24,7 +25,7 @@ def prepare_runtime(config, logger):
         ],
     )
 
-    _ensure_youtube_cookies(logger)
+    _ensure_youtube_auth(config, logger)
     _ensure_bilibili_login(config, logger)
 
 
@@ -48,18 +49,45 @@ def _ensure_tool(tool_name: str, logger, install_candidates: list[list[str]]):
 
 
 def _tool_exists(tool_name: str) -> bool:
-    tool_path = Path(tool_name)
-    if tool_path.is_file():
-        return True
-    return shutil.which(tool_name) is not None
+    return cli_exists(tool_name)
 
 
-def _ensure_youtube_cookies(logger):
-    cookie_path = Path(YOUTUBE_COOKIES_PATH)
-    if cookie_path.exists() and cookie_path.stat().st_size > 0:
-        logger.info(f"YouTube cookies 已就绪: {cookie_path}")
-        return
+def _is_interactive() -> bool:
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:
+        return False
 
+
+def _pick_probe_channel_id(config) -> str:
+    if config.youtube.probe_channel_id:
+        return config.youtube.probe_channel_id
+    for ch in config.channels:
+        if ch.enabled:
+            return ch.yt_channel_id
+    raise RuntimeError("没有启用的频道，无法进行 YouTube 探针验证")
+
+
+def _ensure_youtube_auth(config, logger):
+    yt_cfg = config.youtube
+    if yt_cfg.cookies_from_browser:
+        logger.info(f"YouTube 认证方式: --cookies-from-browser {yt_cfg.cookies_from_browser}")
+    else:
+        cookie_path = Path(yt_cfg.cookies or YOUTUBE_COOKIES_PATH)
+        if cookie_path.exists() and cookie_path.stat().st_size > 0:
+            logger.info(f"YouTube cookies 文件已就绪: {cookie_path}")
+        else:
+            _guide_youtube_cookie_export(cookie_path, logger)
+
+    _probe_youtube_or_retry(config, logger)
+
+
+def _guide_youtube_cookie_export(cookie_path: Path, logger):
+    if not _is_interactive():
+        raise RuntimeError(
+            "未检测到 YouTube cookies，且当前为非交互环境。请预先准备 cookies 文件，"
+            "或在配置中启用 global.youtube.cookies_from_browser 后再启动。"
+        )
     logger.warning("未找到 YouTube cookies 文件，需先完成一次登录导出。")
     print("\n[YouTube 登录引导]")
     print("1. 在浏览器登录 YouTube（建议使用常用账号）")
@@ -72,9 +100,39 @@ def _ensure_youtube_cookies(logger):
         if answer == "q":
             raise SystemExit("用户取消启动")
         if cookie_path.exists() and cookie_path.stat().st_size > 0:
-            logger.info(f"YouTube cookies 已就绪: {cookie_path}")
+            logger.info(f"YouTube cookies 文件已就绪: {cookie_path}")
             return
         logger.warning("仍未检测到有效的 YouTube cookies 文件，请确认路径和格式。")
+
+
+def _probe_youtube_or_retry(config, logger):
+    yt_cfg = config.youtube
+    probe_channel_id = _pick_probe_channel_id(config)
+    while True:
+        try:
+            probe_youtube_access(
+                probe_channel_id,
+                cookies_path=yt_cfg.cookies,
+                cookies_from_browser=yt_cfg.cookies_from_browser,
+            )
+            logger.info("YouTube 认证探针校验成功")
+            return
+        except Exception as e:
+            logger.error(f"YouTube 认证探针失败: {e}")
+            if not _is_interactive():
+                raise RuntimeError(
+                    "YouTube 认证探针失败，且当前为非交互环境。请更新 cookies 文件，"
+                    "或改用 global.youtube.cookies_from_browser（Ubuntu 可用 chrome/chromium/firefox）。"
+                ) from e
+            print("\n[YouTube 探针失败处理]")
+            print("可能原因：cookies 过期 / 导出格式不对 / 账号触发风控。")
+            print("建议方案（任选其一后回车重试）：")
+            print("1. 重新导出 Netscape 格式 cookies 到配置路径")
+            print("2. 在 src/config/config.yaml 中启用 global.youtube.cookies_from_browser: edge 或 chrome")
+            print("3. 浏览器先访问 YouTube 和目标频道 /videos 页后再导出")
+            answer = input("修复后按回车重试（输入 q 退出）: ").strip().lower()
+            if answer == "q":
+                raise SystemExit("用户取消启动")
 
 
 def _ensure_bilibili_login(config, logger):
@@ -83,6 +141,11 @@ def _ensure_bilibili_login(config, logger):
     if cookie_path.exists() and cookie_path.stat().st_size > 0:
         logger.info(f"Bilibili cookies 已就绪: {cookie_path}")
         return
+
+    if not _is_interactive():
+        raise RuntimeError(
+            "未检测到 Bilibili cookies，且当前为非交互环境。请先在可交互终端运行一次登录生成 cookies.json，再部署到 Ubuntu。"
+        )
 
     logger.warning("未找到 Bilibili cookies，尝试调用 biliup 登录流程...")
     print("\n[Bilibili 登录引导]")
