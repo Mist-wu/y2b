@@ -68,8 +68,18 @@ class SubtitleService:
         cn_size = max(24, round(height * style.cn_font_ratio))
         en_size = max(16, round(height * style.en_font_ratio))
         cn_margin = max(40, round(height * style.cn_margin_ratio))
-        cn_single_line_margin = max(40, round(height * style.cn_single_line_margin_ratio))
         en_margin = max(24, round(height * style.en_margin_ratio))
+        line_gap = max(8, round(height * 0.008))
+        cn_single_line_margin = max(
+            40,
+            en_margin + en_size + line_gap,
+            round(height * style.cn_single_line_margin_ratio),
+        )
+        cn_single_line_wrapped_en_margin = max(
+            cn_single_line_margin,
+            en_margin + en_size * 2 + line_gap,
+            round(height * style.cn_single_line_wrapped_en_margin_ratio),
+        )
         cn_outline = max(2, round(height * style.cn_outline_ratio))
         en_outline = max(2, round(height * style.en_outline_ratio))
 
@@ -85,6 +95,7 @@ PlayResY: {height}
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: CN,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_margin},1
 Style: CN1,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_single_line_margin},1
+Style: CN1E2,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_single_line_wrapped_en_margin},1
 Style: EN,{style.font_en},{en_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{en_outline},0,2,60,60,{en_margin},1
 
 [Events]
@@ -97,9 +108,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = self._ass_time(cue.start)
             end = self._ass_time(cue.end)
             cn_wrapped = self._wrap_text(cue.translation or cue.text, max_chars=max(14, round(width / 54)))
-            cn_style = "CN" if "\n" in cn_wrapped else "CN1"
+            en_wrapped = self._wrap_text(cue.text, max_chars=max(36, round(width / 32)))
+            if "\n" in cn_wrapped:
+                cn_style = "CN"
+            elif "\n" in en_wrapped:
+                cn_style = "CN1E2"
+            else:
+                cn_style = "CN1"
             cn = self._ass_escape(cn_wrapped)
-            en = self._ass_escape(self._wrap_text(cue.text, max_chars=max(36, round(width / 32))))
+            en = self._ass_escape(en_wrapped)
             lines.append(f"Dialogue: 1,{start},{end},{cn_style},,0,0,0,,{cn}\n")
             lines.append(f"Dialogue: 0,{start},{end},EN,,0,0,0,,{en}\n")
 
@@ -141,11 +158,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if clean and (end - start) >= 0.2:
                     self._append_cue(cues, SubtitleCue(start=start, end=end, text=clean))
             i += 1
-        return cues
-
-    def _post_process_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
-        cues = self._merge_sentence_fragments(cues)
-        cues = self._close_short_gaps(cues)
         return cues
 
     def _segment_cues_with_deepseek(self, cues: list[SubtitleCue], *, source_lang: str) -> list[SubtitleCue]:

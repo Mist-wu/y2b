@@ -65,3 +65,58 @@ def test_ass_time_and_escape():
 
 def test_parse_json_value_tolerates_fenced_json():
     assert _parse_json_value('```json\n{"translations":["你好"]}\n```') == {"translations": ["你好"]}
+
+
+def test_parse_srt(tmp_path: Path):
+    path = tmp_path / "sample.srt"
+    path.write_text(
+        "1\n"
+        "00:00:01,200 --> 00:00:03,500\n"
+        "Hello, world!\n\n"
+        "2\n"
+        "00:00:03,600 --> 00:00:05,800\n"
+        "Subtitle two\n",
+        encoding="utf-8",
+    )
+
+    cues = service().parse(path)
+
+    assert len(cues) == 2
+    assert cues[0].text == "Hello, world!"
+    assert cues[0].start == 1.2
+    assert cues[0].end == 3.5
+    assert cues[1].text == "Subtitle two"
+    assert cues[1].start == 3.6
+    assert cues[1].end == 5.8
+
+
+def test_close_short_gaps():
+    svc = service()
+    cues = [
+        SubtitleCue(0.0, 1.0, "First"),
+        SubtitleCue(1.2, 2.0, "Second"),
+    ]
+    closed = svc._close_short_gaps(cues)
+    assert closed[0].end == 1.2
+    assert closed[1].start == 1.2
+
+
+def test_dedupe_repeated_words():
+    svc = service()
+    # "welcome to finance" repeated (length of block 3 words)
+    text = "welcome to finance welcome to finance today"
+    deduped = svc._dedupe_repeated_words(text)
+    assert deduped == "welcome to finance today"
+
+
+def test_wrap_text():
+    svc = service()
+    text = "This is a very long text"
+    wrapped = svc._wrap_text(text, max_chars=10)
+    # Re-splits by space.
+    # Chunk 1: "This is a" (len 9)
+    # Chunk 2: "very long" (len 9)
+    # Remaining: "text"
+    # Result should be wrapped text with \n, truncated to at most 2 lines.
+    assert wrapped == "This is a\nvery long"
+
