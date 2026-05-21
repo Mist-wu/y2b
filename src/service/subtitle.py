@@ -186,7 +186,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     def _segment_one_batch(self, batch_index: int, batch: list[SubtitleCue], *, source_lang: str) -> list[SubtitleCue]:
         if self.logger:
-            self.logger.info(f"DeepSeek v4 flash 非思考智能分句批次 {batch_index + 1}: {len(batch)} 个字幕 token")
+            self.logger.info(f"分句批次 {batch_index + 1}: {len(batch)} 个字幕 token")
         try:
             ranges = self.translator.segment_subtitle_batch(
                 [cue.text for cue in batch],
@@ -195,12 +195,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return self._apply_ai_ranges(batch, ranges)
         except Exception as e:
             if self.logger:
-                self.logger.warning(f"DeepSeek 智能分句失败，使用规则分句回退: {e}")
+                self.logger.warning(f"智能分句失败，使用规则分句回退: {e}")
             return self._merge_sentence_fragments(batch)
 
     def _apply_ai_ranges(self, cues: list[SubtitleCue], ranges: list[dict[str, int]]) -> list[SubtitleCue]:
         if not ranges:
-            raise RuntimeError("DeepSeek 分句返回空结果")
+            raise RuntimeError("分句返回空结果")
         result: list[SubtitleCue] = []
         expected_start = 0
         last_index = len(cues) - 1
@@ -208,7 +208,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = int(item["start"])
             end = int(item["end"])
             if start != expected_start or end < start or end > last_index:
-                raise RuntimeError(f"DeepSeek 分句索引不连续: expected_start={expected_start}, item={item}")
+                raise RuntimeError(f"分句索引不连续: expected_start={expected_start}, item={item}")
             group = cues[start : end + 1]
             text = self._dedupe_repeated_words(" ".join(cue.text for cue in group).strip())
             duration = group[-1].end - group[0].start
@@ -224,7 +224,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
             expected_start = end + 1
         if expected_start != len(cues):
-            raise RuntimeError(f"DeepSeek 分句未覆盖全部 token: covered={expected_start}, total={len(cues)}")
+            raise RuntimeError(f"分句未覆盖全部 token: covered={expected_start}, total={len(cues)}")
         return result
 
     def _repair_continuation_boundaries(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
