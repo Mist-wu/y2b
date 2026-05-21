@@ -50,7 +50,3 @@ class DownloaderService:
             extractor_args=self.youtube_extractor_args,
             logger=logger,
         )
-
-    # Backward-compatible method name.
-    def download(self, video, base_dir, logger=None) -> Path:
-        return self.download_url(video["webpage_url"], base_dir, video_id=video["id"], logger=logger)

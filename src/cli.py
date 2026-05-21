@@ -18,7 +18,6 @@ from src.service.pipeline import SingleVideoPipeline
 from src.state import StateRepository
 
 
-PROJECT_ROOT = Path.cwd()
 console = Console()
 
 

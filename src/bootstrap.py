@@ -37,13 +37,6 @@ def ensure_runtime_tools(config, logger=None) -> None:
         raise RuntimeError("未检测到 ffmpeg/ffprobe，请先安装 ffmpeg。")
 
 
-def prepare_runtime(config, logger=None) -> None:
-    """Backward-compatible runtime preparation for non-monitor CLI pipeline."""
-    ensure_runtime_tools(config, logger)
-    ensure_youtube_ready(config)
-    ensure_bilibili_ready(config)
-
-
 def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
     results: list[CheckResult] = []
 
