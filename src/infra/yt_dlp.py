@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from src.infra.cli_path import resolve_cli
+from src.infra.ffmpeg import _bin
 
 YOUTUBE_COOKIES_PATH = str(Path(__file__).parent.parent.parent / "data" / "youtube_cookies.txt")
 HLS_FRAGMENT_403_PATTERN = re.compile(r"HTTP Error 403: Forbidden.*fragment", re.IGNORECASE)
@@ -240,6 +241,62 @@ def fetch_video_metadata(
     return json.loads(content.splitlines()[0].strip())
 
 
+def _ensure_merged_mp4(output_path: str | Path, *, logger=None) -> Path:
+    out = Path(output_path)
+    if out.exists() and out.stat().st_size > 0:
+        return out
+
+    parent = out.parent
+    stem = out.stem
+    video_candidates = sorted(
+        [
+            p
+            for p in parent.glob(f"{stem}*.mp4")
+            if p.is_file() and p.stat().st_size > 0 and p != out
+        ],
+        key=lambda p: p.stat().st_size,
+        reverse=True,
+    )
+    audio_candidates = sorted(
+        [
+            p
+            for p in (*parent.glob(f"{stem}*.webm"), *parent.glob(f"{stem}*.m4a"), *parent.glob(f"{stem}*.opus"))
+            if p.is_file() and p.stat().st_size > 0
+        ],
+        key=lambda p: p.stat().st_size,
+        reverse=True,
+    )
+    if not video_candidates:
+        raise RuntimeError(f"yt-dlp 下载完成但未找到视频文件: {out}")
+
+    video_path = video_candidates[0]
+    if not audio_candidates:
+        if logger:
+            logger.info(f"[yt-dlp] 使用已下载视频: {video_path.name}")
+        video_path.replace(out)
+        return out
+
+    audio_path = audio_candidates[0]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        _bin("ffmpeg"),
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-c",
+        "copy",
+        str(out),
+    ]
+    if logger:
+        logger.info(f"[ffmpeg] 合并音视频: {video_path.name} + {audio_path.name} -> {out.name}")
+    subprocess.run(cmd, capture_output=True, text=True, check=True)
+    if not out.exists() or out.stat().st_size == 0:
+        raise RuntimeError(f"音视频合并失败: {out}")
+    return out
+
+
 def download_video(
     url: str,
     output_path: str,
@@ -283,6 +340,7 @@ def download_video(
         if logger:
             logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8) 格式")
         _run_yt_dlp_stream(non_hls_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=6)
+        _ensure_merged_mp4(output_path, logger=logger)
         return
     except RuntimeError as e:
         err_text = str(e)
@@ -306,6 +364,7 @@ def download_video(
         common_args[-1],
     ]
     _run_yt_dlp_stream(fallback_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=8)
+    _ensure_merged_mp4(output_path, logger=logger)
 
 
 def download_subtitle(
