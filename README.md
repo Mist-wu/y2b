@@ -46,11 +46,13 @@ uv sync
 DEEPSEEK_API_KEY=你的 DeepSeek API Key
 ```
 
-默认模型：
+默认使用 DeepSeek v4 flash 非思考模式：
 
 ```yaml
 ai:
+  provider: deepseek
   model: deepseek-v4-flash
+  reasoning: false
 ```
 
 ## 登录
@@ -139,3 +141,34 @@ src/config/config.yaml
 ```
 
 字幕样式可以在 `subtitle_style` 中调整。默认效果是底部双语字幕：中文大字号粗黑描边，英文小字号黑描边。
+
+项目内置 `fonts/` 字体目录，默认使用：
+
+- 中文：Source Han Sans CN
+- 英文：Inter
+
+ffmpeg 压制时会通过 `ass` filter 的 `fontsdir` 加载该目录，减少跨平台字体缺失问题。
+
+## Docker
+
+```bash
+docker build -t y2b .
+docker run --rm -it \
+  --env-file .env \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/downloads:/app/downloads" \
+  -v "$PWD/output:/app/output" \
+  -v "$PWD/logs:/app/logs" \
+  y2b check
+```
+
+处理视频示例：
+
+```bash
+docker run --rm -it --env-file .env \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/downloads:/app/downloads" \
+  -v "$PWD/output:/app/output" \
+  -v "$PWD/logs:/app/logs" \
+  y2b translate "https://www.youtube.com/watch?v=xxxx" --no-upload --keep-files
+```
