@@ -5,6 +5,7 @@ from pathlib import Path
 from src.infra.cli_path import resolve_cli
 
 BV_PATTERN = re.compile(r"\bBV[0-9A-Za-z]+\b")
+ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def upload(
@@ -51,12 +52,19 @@ def upload(
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         merged_err = "\n".join([e.stdout or "", e.stderr or ""]).strip()
-        raise RuntimeError(f"biliup 上传失败:\n{merged_err or e}") from e
+        raise RuntimeError(_format_upload_error(merged_err or str(e))) from e
     merged = "\n".join([result.stdout or "", result.stderr or ""])
     match = BV_PATTERN.search(merged)
     if not match:
         raise RuntimeError(f"biliup 上传成功但未解析到 BV 号，输出如下:\n{merged.strip()}")
     return match.group(0)
+
+
+def _format_upload_error(raw_error: str) -> str:
+    text = ANSI_PATTERN.sub("", raw_error or "").strip()
+    if "upload rate limit (code: 601)" in text or "您上传视频过快" in text:
+        return "biliup 上传失败：Bilibili 返回上传限流(code 601)，请稍作休息后重试。"
+    return f"biliup 上传失败:\n{text}"
 
 
 def login(executable: str, user_cookie_arg: str, user_cookie: str):
