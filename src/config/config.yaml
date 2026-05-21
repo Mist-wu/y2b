@@ -9,6 +9,10 @@ ai:
   model: deepseek-v4-flash
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
+  reasoning: false
+  json_response: true
+  timeout: 120
+  max_retries: 2
 youtube:
   cookies: null
   cookies_from_browser: chrome
@@ -17,14 +21,17 @@ translation:
   source_lang: en
   target_lang: zh-CN
   max_title_length: 70
-  subtitle_batch_size: 30
+  subtitle_batch_size: 50
+  segmentation_batch_size: 300
+  segmentation_concurrency: 2
   style_prompt: 适合B站的中文标题，简洁、自然、不夸张
   glossary:
     Brawl Stars: 荒野乱斗
     Hypercharge: 终极技能
 subtitle_style:
-  font_cn: Noto Sans CJK SC
-  font_en: Arial
+  font_cn: Source Han Sans CN
+  font_en: Inter
+  fonts_dir: ./fonts
   cn_font_ratio: 0.05
   en_font_ratio: 0.028
   cn_margin_ratio: 0.095

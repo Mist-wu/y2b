@@ -1,83 +1,106 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
+ENV_PREFIX = "Y2B_"
 
 
-@dataclass
-class AIConfig:
-    provider: str = "deepseek"
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+
+class AIConfig(StrictModel):
+    provider: Literal["deepseek", "openai", "gemini"] = "deepseek"
     model: str = "deepseek-v4-flash"
     base_url: str = "https://api.deepseek.com"
     api_key_env: str = "DEEPSEEK_API_KEY"
+    reasoning: bool = False
+    reasoning_effort: str | None = None
+    json_response: bool = True
+    timeout: float = 120.0
+    max_retries: int = 2
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("ai.model 不能为空")
+        return value
 
 
-@dataclass
-class TranslationConfig:
+class TranslationConfig(StrictModel):
     source_lang: str = "en"
     target_lang: str = "zh-CN"
-    max_title_length: int = 70
+    max_title_length: int = Field(default=70, ge=10, le=120)
     style_prompt: str = "适合B站的中文标题，简洁、自然、不夸张"
-    glossary: dict[str, str] = field(default_factory=dict)
-    subtitle_batch_size: int = 30
+    glossary: dict[str, str] = Field(default_factory=dict)
+    subtitle_batch_size: int = Field(default=50, ge=1, le=200)
+    segmentation_batch_size: int = Field(default=300, ge=40, le=800)
+    segmentation_concurrency: int = Field(default=2, ge=1, le=6)
 
 
-@dataclass
-class YouTubeConfig:
+class YouTubeConfig(StrictModel):
     cookies: str | None = "./data/youtube_cookies.txt"
     cookies_from_browser: str | None = None
-    extractor_args: list[str] = field(default_factory=list)
+    extractor_args: list[str] = Field(default_factory=list)
 
 
-@dataclass
-class SubtitleStyleConfig:
-    font_cn: str = "Noto Sans CJK SC"
-    font_en: str = "Arial"
-    cn_font_ratio: float = 0.050
-    en_font_ratio: float = 0.028
-    cn_margin_ratio: float = 0.095
-    en_margin_ratio: float = 0.039
-    cn_outline_ratio: float = 0.0038
-    en_outline_ratio: float = 0.0028
+class SubtitleStyleConfig(StrictModel):
+    font_cn: str = "Source Han Sans CN"
+    font_en: str = "Inter"
+    fonts_dir: str | None = "./fonts"
+    cn_font_ratio: float = Field(default=0.050, gt=0)
+    en_font_ratio: float = Field(default=0.028, gt=0)
+    cn_margin_ratio: float = Field(default=0.095, gt=0)
+    en_margin_ratio: float = Field(default=0.039, gt=0)
+    cn_outline_ratio: float = Field(default=0.0038, ge=0)
+    en_outline_ratio: float = Field(default=0.0028, ge=0)
 
 
-@dataclass
-class BilibiliUploadConfig:
+class BilibiliUploadConfig(StrictModel):
     copyright: int | None = None
     source: str | None = None
     line: str | None = None
 
 
-@dataclass
-class BilibiliConfig:
+class BilibiliConfig(StrictModel):
     cookies: str = "./data/bilibili_cookies.json"
     executable: str = "biliup"
     user_cookie_arg: str = "-u"
-    default_tags: list[str] = field(default_factory=lambda: ["搬运", "翻译"])
+    default_tags: list[str] = Field(default_factory=lambda: ["搬运", "翻译"])
     default_tid: int = 4
     title_prefix: str = ""
-    extra_args: list[str] = field(default_factory=list)
-    upload: BilibiliUploadConfig = field(default_factory=BilibiliUploadConfig)
+    extra_args: list[str] = Field(default_factory=list)
+    upload: BilibiliUploadConfig = Field(default_factory=BilibiliUploadConfig)
 
 
-@dataclass
-class AppConfig:
+class GlobalConfig(StrictModel):
     download_dir: str = "./downloads"
     output_dir: str = "./output"
     log_dir: str = "./logs"
     state_db: str = "./data/state.db"
-    max_retry: int = 3
-    youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
-    ai: AIConfig = field(default_factory=AIConfig)
-    translation: TranslationConfig = field(default_factory=TranslationConfig)
-    subtitle_style: SubtitleStyleConfig = field(default_factory=SubtitleStyleConfig)
-    bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
+    max_retry: int = Field(default=3, ge=1)
+
+
+class AppConfig(StrictModel):
+    download_dir: str = "./downloads"
+    output_dir: str = "./output"
+    log_dir: str = "./logs"
+    state_db: str = "./data/state.db"
+    max_retry: int = Field(default=3, ge=1)
+    youtube: YouTubeConfig = Field(default_factory=YouTubeConfig)
+    ai: AIConfig = Field(default_factory=AIConfig)
+    translation: TranslationConfig = Field(default_factory=TranslationConfig)
+    subtitle_style: SubtitleStyleConfig = Field(default_factory=SubtitleStyleConfig)
+    bilibili: BilibiliConfig = Field(default_factory=BilibiliConfig)
 
     @property
     def bilibili_cookies(self) -> str:
@@ -88,25 +111,8 @@ class AppConfig:
         return self.bilibili.upload
 
 
-def _to_dict_str_str(raw: Any) -> dict[str, str]:
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, str] = {}
-    for k, v in raw.items():
-        if k is None or v is None:
-            continue
-        result[str(k)] = str(v)
-    return result
-
-
-def _to_str_list(raw: Any) -> list[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        return [str(x) for x in raw if str(x).strip()]
-    if isinstance(raw, str):
-        return [raw] if raw.strip() else []
-    return []
+class ConfigLoadError(RuntimeError):
+    pass
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
@@ -114,66 +120,70 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     raw: dict[str, Any] = {}
     if config_path.exists():
         with open(config_path, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+            loaded = yaml.safe_load(f) or {}
+        if not isinstance(loaded, dict):
+            raise ConfigLoadError(f"配置文件必须是 YAML 对象: {config_path}")
+        raw = loaded
 
-    global_cfg = raw.get("global", {}) or {}
-    ai_raw = raw.get("ai", global_cfg.get("ai", {})) or {}
-    youtube_raw = raw.get("youtube", global_cfg.get("youtube", {})) or {}
-    translation_raw = raw.get("translation", global_cfg.get("translation", {})) or {}
-    style_raw = raw.get("subtitle_style", raw.get("subtitle", {}).get("style", {})) or {}
-    bilibili_raw = raw.get("bilibili", {}) or {}
-    bili_upload_raw = bilibili_raw.get("upload", {}) or {}
+    try:
+        normalized = _normalize_legacy_yaml(raw)
+        _apply_env_overrides(normalized)
+        return AppConfig.model_validate(normalized)
+    except ValidationError as e:
+        raise ConfigLoadError(f"配置校验失败: {config_path}\n{e}") from e
 
-    return AppConfig(
-        download_dir=str(global_cfg.get("download_dir", "./downloads")),
-        output_dir=str(global_cfg.get("output_dir", "./output")),
-        log_dir=str(global_cfg.get("log_dir", "./logs")),
-        state_db=str(global_cfg.get("state_db", "./data/state.db")),
-        max_retry=int(global_cfg.get("max_retry", 3)),
-        youtube=YouTubeConfig(
-            cookies=youtube_raw.get("cookies", "./data/youtube_cookies.txt"),
-            cookies_from_browser=youtube_raw.get("cookies_from_browser"),
-            extractor_args=_to_str_list(youtube_raw.get("extractor_args", [])),
-        ),
-        ai=AIConfig(
-            provider=str(ai_raw.get("provider", "deepseek")),
-            model=str(ai_raw.get("model", "deepseek-v4-flash")),
-            base_url=str(ai_raw.get("base_url", "https://api.deepseek.com")),
-            api_key_env=str(ai_raw.get("api_key_env", "DEEPSEEK_API_KEY")),
-        ),
-        translation=TranslationConfig(
-            source_lang=str(translation_raw.get("source_lang", "en")),
-            target_lang=str(translation_raw.get("target_lang", "zh-CN")),
-            max_title_length=int(translation_raw.get("max_title_length", 70)),
-            style_prompt=str(translation_raw.get("style_prompt", "适合B站的中文标题，简洁、自然、不夸张")),
-            glossary=_to_dict_str_str(translation_raw.get("glossary", {})),
-            subtitle_batch_size=int(translation_raw.get("subtitle_batch_size", 30)),
-        ),
-        subtitle_style=SubtitleStyleConfig(
-            font_cn=str(style_raw.get("font_cn", "Noto Sans CJK SC")),
-            font_en=str(style_raw.get("font_en", "Arial")),
-            cn_font_ratio=float(style_raw.get("cn_font_ratio", 0.050)),
-            en_font_ratio=float(style_raw.get("en_font_ratio", 0.028)),
-            cn_margin_ratio=float(style_raw.get("cn_margin_ratio", 0.095)),
-            en_margin_ratio=float(style_raw.get("en_margin_ratio", 0.039)),
-            cn_outline_ratio=float(style_raw.get("cn_outline_ratio", 0.0038)),
-            en_outline_ratio=float(style_raw.get("en_outline_ratio", 0.0028)),
-        ),
-        bilibili=BilibiliConfig(
-            cookies=str(bilibili_raw.get("cookies", "./data/bilibili_cookies.json")),
-            executable=str(bilibili_raw.get("executable", "biliup")),
-            user_cookie_arg=str(bilibili_raw.get("user_cookie_arg", "-u")),
-            default_tags=_to_str_list(bilibili_raw.get("default_tags", ["搬运", "翻译"])),
-            default_tid=int(bilibili_raw.get("default_tid", 4)),
-            title_prefix=str(bilibili_raw.get("title_prefix", "")),
-            extra_args=_to_str_list(bilibili_raw.get("extra_args", [])),
-            upload=BilibiliUploadConfig(
-                copyright=bili_upload_raw.get("copyright"),
-                source=bili_upload_raw.get("source"),
-                line=bili_upload_raw.get("line"),
-            ),
-        ),
-    )
+
+def _normalize_legacy_yaml(raw: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"global", "ai", "youtube", "translation", "subtitle_style", "subtitle", "bilibili"}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ConfigLoadError(f"配置包含未知顶层字段: {', '.join(unknown)}")
+
+    global_cfg = GlobalConfig.model_validate(raw.get("global", {}) or {})
+    subtitle_raw = raw.get("subtitle") or {}
+    if subtitle_raw and (not isinstance(subtitle_raw, dict) or set(subtitle_raw) - {"style"}):
+        raise ConfigLoadError("配置字段 subtitle 只支持子字段 style")
+    style = raw.get("subtitle_style")
+    if style is None:
+        style = (subtitle_raw.get("style") or {})
+
+    return {
+        "download_dir": global_cfg.download_dir,
+        "output_dir": global_cfg.output_dir,
+        "log_dir": global_cfg.log_dir,
+        "state_db": global_cfg.state_db,
+        "max_retry": global_cfg.max_retry,
+        "youtube": raw.get("youtube", {}) or {},
+        "ai": raw.get("ai", {}) or {},
+        "translation": raw.get("translation", {}) or {},
+        "subtitle_style": style or {},
+        "bilibili": raw.get("bilibili", {}) or {},
+    }
+
+
+def _apply_env_overrides(data: dict[str, Any]) -> None:
+    """Support env overrides like Y2B_AI__MODEL=deepseek-v4-flash."""
+    for key, value in os.environ.items():
+        if not key.startswith(ENV_PREFIX):
+            continue
+        path = [part.lower() for part in key[len(ENV_PREFIX) :].split("__") if part]
+        if not path:
+            continue
+        cursor: dict[str, Any] = data
+        for part in path[:-1]:
+            next_value = cursor.setdefault(part, {})
+            if not isinstance(next_value, dict):
+                next_value = {}
+                cursor[part] = next_value
+            cursor = next_value
+        cursor[path[-1]] = _parse_env_value(value)
+
+
+def _parse_env_value(value: str) -> Any:
+    try:
+        return yaml.safe_load(value)
+    except Exception:
+        return value
 
 
 def save_youtube_auth_config(
