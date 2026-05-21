@@ -23,7 +23,7 @@ translation:
   max_title_length: 70
   subtitle_batch_size: 50
   segmentation_batch_size: 300
-  segmentation_concurrency: 2
+  segmentation_concurrency: 4
   style_prompt: 适合B站的中文标题，简洁、自然、不夸张
   glossary:
     Brawl Stars: 荒野乱斗
