@@ -112,6 +112,10 @@ y2b translate <url> \
   --tid 4
 ```
 
+未显式传 `--tag` / `--tid` 时，上传前会让 DeepSeek 自动推荐 1-4 个标签，并从白名单分区中选择一个分区；当前白名单为 `知识(36)`、`游戏(4)`。命令行参数始终优先。
+
+`bilibili.upload.line` 默认保持为 `null`，由 `biliup` 使用默认上传线路；如需手动指定，必须使用当前 `biliup upload --help` 列出的合法线路值。
+
 只生成压制后视频，不上传：
 
 ```bash
