@@ -11,8 +11,10 @@ requires-python = ">=3.12"
 dependencies = [
 	"biliup>=1.1.29",
 	"openai",
+	"pydantic>=2",
 	"python-dotenv",
 	"pyyaml",
+	"rich",
 	"quickjs>=1.19.4",
 	"yt-dlp>=2025.12.8",
 	"yt-dlp-ejs>=0.8.0",
@@ -26,3 +28,8 @@ include = ["src*"]
 
 [tool.uv.sources]
 yt-dlp = { git = "https://github.com/yt-dlp/yt-dlp.git" }
+
+[dependency-groups]
+dev = [
+	"pytest>=8",
+]
