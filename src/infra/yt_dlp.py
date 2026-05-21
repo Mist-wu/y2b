@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -30,6 +31,13 @@ def _build_extractor_args(args: list[str] | None) -> list[str]:
         if text:
             cli_args.extend(["--extractor-args", text])
     return cli_args
+
+
+def _build_js_runtime_args() -> list[str]:
+    node = resolve_cli("node") or shutil.which("node")
+    if node:
+        return ["--js-runtimes", f"node:{node}"]
+    return []
 
 
 def _run_yt_dlp(cmd: list[str], *, action: str) -> subprocess.CompletedProcess[str]:
@@ -187,6 +195,7 @@ def fetch_channel_video_heads(
         str(playlist_start),
         "--playlist-end",
         str(playlist_end),
+        *_build_js_runtime_args(),
         *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
         *_build_extractor_args(extractor_args),
     ]
@@ -220,6 +229,7 @@ def fetch_video_metadata(
         "--dump-json",
         "--no-warnings",
         "--no-playlist",
+        *_build_js_runtime_args(),
         *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
         *_build_extractor_args(extractor_args),
     ]
@@ -256,6 +266,7 @@ def download_video(
         "mp4",
         "--extractor-args",
         "youtube:player_client=default,-ios",
+        *_build_js_runtime_args(),
         *user_extractor_args,
         *auth_args,
         url,
@@ -327,6 +338,7 @@ def download_subtitle(
         "--no-warnings",
         "-o",
         out_template,
+        *_build_js_runtime_args(),
         *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
         *_build_extractor_args(extractor_args),
     ]
