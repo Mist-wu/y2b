@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
 
 from src.bootstrap import login_bilibili, run_checks
 from src.config.config import load_config, save_youtube_auth_config
@@ -17,6 +19,7 @@ from src.state import StateRepository
 
 
 PROJECT_ROOT = Path.cwd()
+console = Console()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n已中断。", file=sys.stderr)
         return 130
     except Exception as e:
-        print(f"错误: {e}", file=sys.stderr)
+        console.print(f"[bold red]错误:[/] {e}", file=sys.stderr)
         return 1
 
 
@@ -158,14 +161,19 @@ def cmd_check(args) -> int:
     config = load_config()
     results = run_checks(config, probe_url=args.probe_url)
     ok_all = True
+    table = Table(title="y2b 环境检查")
+    table.add_column("状态", justify="center")
+    table.add_column("项目")
+    table.add_column("信息")
     for item in results:
-        icon = "✅" if item.ok else "❌"
-        print(f"{icon} {item.name}: {item.message}")
+        icon = "[green]✅[/]" if item.ok else "[red]❌[/]"
+        table.add_row(icon, item.name, item.message)
         ok_all = ok_all and item.ok
+    console.print(table)
     if ok_all:
-        print("\n系统状态正常，可以执行：y2b translate <YouTube视频链接>")
+        console.print("\n[green]系统状态正常[/]，可以执行：y2b translate <YouTube视频链接>")
         return 0
-    print("\n存在未通过检查的项目，请修复后重试。")
+    console.print("\n[red]存在未通过检查的项目，请修复后重试。[/]")
     return 1
 
 
@@ -174,20 +182,21 @@ def cmd_translate(args) -> int:
     logger = setup_logger(config.log_dir)
     state = StateRepository(config.state_db)
     job_id = state.create_job(url=args.url)
-    print(f"创建任务: {job_id}")
+    console.print(f"创建任务: [cyan]{job_id}[/]")
     try:
         pipeline = SingleVideoPipeline(config, logger, state)
-        record = pipeline.run(
-            args.url,
-            job_id=job_id,
-            source_lang=args.source_lang,
-            target_lang=args.target_lang,
-            title_override=args.title,
-            tags=args.tags,
-            tid=args.tid,
-            no_upload=args.no_upload,
-            keep_files=args.keep_files,
-        )
+        with console.status("[bold green]任务执行中，详细日志见 logs/app.log...[/]", spinner="dots"):
+            record = pipeline.run(
+                args.url,
+                job_id=job_id,
+                source_lang=args.source_lang,
+                target_lang=args.target_lang,
+                title_override=args.title,
+                tags=args.tags,
+                tid=args.tid,
+                no_upload=args.no_upload,
+                keep_files=args.keep_files,
+            )
         print_job_detail(record)
         return 0
     finally:
@@ -204,16 +213,21 @@ def cmd_jobs(args) -> int:
     if not rows:
         print("暂无任务。")
         return 0
-    print(f"{'JOB_ID':12}  {'VIDEO_ID':12}  {'STATUS':18}  {'PROG':>5}  {'BVID':12}  STEP")
+    table = Table(title=f"最近 {len(rows)} 个任务")
+    for col in ("JOB_ID", "VIDEO_ID", "STATUS", "PROG", "BVID", "STEP"):
+        table.add_column(col)
     for row in rows:
-        print(
-            f"{(row.get('job_id') or '')[:12]:12}  "
-            f"{(row.get('video_id') or '-')[:12]:12}  "
-            f"{(row.get('status') or '-')[:18]:18}  "
-            f"{str(row.get('progress') or 0):>4}%  "
-            f"{(row.get('bvid') or '-')[:12]:12}  "
-            f"{row.get('current_step') or ''}"
+        status = row.get("status") or "-"
+        color = "green" if status == "completed" else "red" if status == "failed" else "yellow"
+        table.add_row(
+            (row.get("job_id") or "")[:12],
+            (row.get("video_id") or "-")[:12],
+            f"[{color}]{status}[/]",
+            f"{row.get('progress') or 0}%",
+            (row.get("bvid") or "-")[:12],
+            row.get("current_step") or "",
         )
+    console.print(table)
     return 0
 
 
