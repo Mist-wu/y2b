@@ -8,9 +8,9 @@ class UploaderService:
         self.config = config
 
     def upload(self, video_path, title, video, *, tags: list[str] | None = None, tid: int | None = None):
-        desc = f"""原视频标题：{video.get('title') or ''}
-原视频链接：{video.get('webpage_url') or video.get('url') or ''}
-频道：{video.get('channel') or video.get('uploader') or video.get('channel_id') or ''}
+        desc = f"""Title: {video.get('title') or ''}
+Url: {video.get('webpage_url') or video.get('url') or ''}
+Uploader: {video.get('channel') or video.get('uploader') or video.get('channel_id') or ''}
 """
         return upload(
             executable=self.config.bilibili.executable,
