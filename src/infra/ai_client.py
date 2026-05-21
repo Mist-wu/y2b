@@ -6,14 +6,9 @@ import re
 import time
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
-import dotenv
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
-
-# Avoid python-dotenv find_dotenv AssertionError when called from stdin.
-dotenv.load_dotenv(dotenv_path=Path(".env"))
 
 
 class LLMAPIError(RuntimeError):
@@ -54,6 +49,10 @@ class BaseLLMClient(ABC):
         source_lang: str = "en",
         max_tokens: int,
     ) -> list[dict[str, int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_json(self, payload: dict[str, Any], *, system_prompt: str, max_tokens: int = 1024) -> Any:
         raise NotImplementedError
 
 
@@ -143,6 +142,18 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 raise RuntimeError(f"字幕分句元素不是对象: {item!r}")
             ranges.append({"start": int(item["start"]), "end": int(item["end"])})
         return ranges
+
+    def complete_json(self, payload: dict[str, Any], *, system_prompt: str, max_tokens: int = 1024) -> Any:
+        content = self._chat(
+            messages=[
+                {"role": "system", "content": self._non_thinking_prompt(system_prompt)},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            json_response=True,
+        )
+        return _parse_json_value(content)
 
     def _chat(self, *, messages: list[dict[str, str]], temperature: float, max_tokens: int, json_response: bool = False) -> str:
         kwargs: dict[str, Any] = {
@@ -248,6 +259,19 @@ def build_segment_prompt(source_lang: str = "en") -> str:
     )
 
 
+def build_bilibili_metadata_prompt(tid_whitelist: dict[int, str], tag_min_count: int, tag_max_count: int) -> str:
+    choices = "\n".join(f"- {tid}: {name}" for tid, name in tid_whitelist.items())
+    return (
+        "你是 Bilibili 投稿元数据助手。请根据视频信息推荐分区和标签。\n"
+        "必须遵守：\n"
+        "1. 只返回 JSON 对象，不要解释；格式：{\"tid\":4,\"tags\":[\"标签1\"]}。\n"
+        f"2. tid 必须且只能从以下白名单中选择：\n{choices}\n"
+        f"3. tags 必须是 {tag_min_count} 到 {tag_max_count} 个中文标签。\n"
+        "4. 标签要适合 B 站搜索，不要包含 #、逗号、换行，不要编造与视频无关的内容。\n"
+        "5. 优先使用具体主题词，其次使用领域词。"
+    )
+
+
 def build_subtitle_translation_prompt(translation_cfg, source_lang: str = "en", target_lang: str = "zh-CN") -> str:
     glossary_lines = ""
     if translation_cfg.glossary:
@@ -335,6 +359,24 @@ def segment_subtitle_ranges(lines: list[str], *, ai_cfg, source_lang: str = "en"
         source_lang=source_lang,
         max_tokens=max(4096, min(20000, len(payload) * 4 + 4096)),
     )
+
+
+def suggest_bilibili_metadata(
+    payload: dict[str, Any],
+    *,
+    ai_cfg,
+    tid_whitelist: dict[int, str],
+    tag_min_count: int = 1,
+    tag_max_count: int = 4,
+) -> dict[str, Any]:
+    data = create_llm_client(ai_cfg).complete_json(
+        payload,
+        system_prompt=build_bilibili_metadata_prompt(tid_whitelist, tag_min_count, tag_max_count),
+        max_tokens=1024,
+    )
+    if not isinstance(data, dict):
+        raise RuntimeError("Bilibili 元数据推荐结果不是 JSON 对象")
+    return data
 
 
 def translate_subtitle_lines(
