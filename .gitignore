@@ -12,15 +12,20 @@ wheels/
 # Virtual environments
 .venv/
 
-# Environment variable files
+# Environment variable and credential files
 .env
 cookies.json
 www.youtube.com_cookies.txt
+data/*cookies*.txt
+data/*cookies*.json
+data/bilibili_cookies.json
+data/qrcode.png
 
 # Runtime outputs
 logs/
 download/
 downloads/
+output/
 *.log
 qrcode.png
 
