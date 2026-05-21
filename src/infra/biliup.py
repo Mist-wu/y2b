@@ -22,13 +22,14 @@ def upload(
     extra_args: list[str] | None = None,
 ) -> str:
     resolved_exec = resolve_cli(executable) or executable
-    cookie_path = str(Path(user_cookie))
+    cookie_path = Path(user_cookie).resolve()
+    work_dir = _biliup_work_dir(cookie_path)
     cmd = [
         resolved_exec,
         user_cookie_arg,
-        cookie_path,
+        str(cookie_path),
         "upload",
-        video_path,
+        str(Path(video_path).resolve()),
         "--title",
         title,
         "--desc",
@@ -49,7 +50,7 @@ def upload(
         cmd.extend(extra_args)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=work_dir)
     except subprocess.CalledProcessError as e:
         merged_err = "\n".join([e.stdout or "", e.stderr or ""]).strip()
         raise RuntimeError(_format_upload_error(merged_err or str(e))) from e
@@ -67,8 +68,15 @@ def _format_upload_error(raw_error: str) -> str:
     return f"biliup 上传失败:\n{text}"
 
 
+def _biliup_work_dir(cookie_path: Path) -> Path:
+    work_dir = cookie_path.parent
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return work_dir
+
+
 def login(executable: str, user_cookie_arg: str, user_cookie: str):
     resolved_exec = resolve_cli(executable) or executable
-    cookie_path = str(Path(user_cookie))
-    cmd = [resolved_exec, user_cookie_arg, cookie_path, "login"]
-    subprocess.run(cmd, check=True)
+    cookie_path = Path(user_cookie).resolve()
+    work_dir = _biliup_work_dir(cookie_path)
+    cmd = [resolved_exec, user_cookie_arg, str(cookie_path), "login"]
+    subprocess.run(cmd, check=True, cwd=work_dir)

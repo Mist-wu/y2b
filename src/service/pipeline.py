@@ -111,6 +111,8 @@ class SingleVideoPipeline:
                     "uploader": meta.get("uploader"),
                     "channel_id": meta.get("channel_id"),
                     "description": meta.get("description"),
+                    "upload_date": meta.get("upload_date"),
+                    "timestamp": meta.get("timestamp"),
                 }
                 final_tags, final_tid = self._resolve_upload_metadata(
                     original_title=original_title,

@@ -44,9 +44,7 @@ bilibili:
   cookies: ./data/bilibili_cookies.json
   executable: biliup
   user_cookie_arg: -u
-  default_tags:
-  - 搬运
-  - 翻译
+  default_tags: []
   default_tid: 4
   title_prefix: ''
   auto_metadata: true
@@ -57,6 +55,6 @@ bilibili:
     4: 游戏
   extra_args: []
   upload:
-    copyright: 2
-    source: youtube
+    copyright: 1
+    source: YouTube
     line: null

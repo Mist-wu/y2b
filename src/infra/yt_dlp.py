@@ -261,6 +261,8 @@ def download_video(
         "3",
         "--merge-output-format",
         "mp4",
+        "-S",
+        "res,fps,br",
         "--extractor-args",
         "youtube:player_client=default,-ios",
         *_build_js_runtime_args(),
@@ -272,13 +274,12 @@ def download_video(
     non_hls_cmd = [
         *common_args[:-1],
         "-f",
-        "bv*[height<=1080][protocol!*=m3u8]+ba[protocol!*=m3u8]/"
-        "b[height<=1080][protocol!*=m3u8]/b[protocol!*=m3u8]",
+        "bv*[protocol!*=m3u8]+ba[protocol!*=m3u8]/b[protocol!*=m3u8]",
         common_args[-1],
     ]
     try:
         if logger:
-            logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8) 格式")
+            logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8)，按分辨率/帧率/码率选择最高质量")
         _run_yt_dlp_stream(non_hls_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=6)
         _ensure_merged_mp4(output_path, logger=logger)
         return
@@ -298,7 +299,7 @@ def download_video(
     fallback_cmd = [
         *common_args[:-1],
         "-f",
-        "bv*[height<=1080]+ba/b",
+        "bv*+ba/b",
         "--concurrent-fragments",
         "1",
         common_args[-1],

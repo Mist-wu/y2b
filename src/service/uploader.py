@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from src.infra.biliup import upload
+
+
+def _format_upload_time(video: dict) -> str:
+    upload_date = video.get("upload_date")
+    if upload_date:
+        text = str(upload_date).strip()
+        if len(text) == 8 and text.isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    timestamp = video.get("timestamp")
+    if timestamp:
+        return datetime.fromtimestamp(int(timestamp), tz=UTC).strftime("%Y-%m-%d")
+    return ""
 
 
 class UploaderService:
@@ -11,6 +25,7 @@ class UploaderService:
         desc = f"""Title: {video.get('title') or ''}
 Url: {video.get('webpage_url') or video.get('url') or ''}
 Uploader: {video.get('channel') or video.get('uploader') or video.get('channel_id') or ''}
+Uploaded: {_format_upload_time(video)}
 """
         return upload(
             executable=self.config.bilibili.executable,
