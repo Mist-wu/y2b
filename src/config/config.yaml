@@ -1,125 +1,47 @@
 global:
-  monitor_backend: youtube_api # youtube_api / yt_dlp
-  poll_interval: 120 #秒
-  monitor_scan_limit: 50
   download_dir: ./downloads
+  output_dir: ./output
   log_dir: ./logs
   state_db: ./data/state.db
   max_retry: 3
-
-  ai:
-    provider: deepseek
-    model: deepseek-chat
-    base_url: https://api.deepseek.com
-    api_key_env: DEEPSEEK_API_KEY
-
-  youtube:
-    api_key_env: YOUTUBE_DATA_API_KEY
-    # 二选一：
-    # 1) 使用导出的 Netscape cookies 文件（默认）
-    cookies: ./www.youtube.com_cookies.txt
-    # 2) 直接读取本机浏览器 cookies（Windows 更稳，推荐 edge/chrome）
-    # cookies_from_browser: edge
-    # 用于启动时探针校验 cookies 是否真的可用；为空时自动取第一个启用频道
-    probe_channel_id:
-    # 透传给 yt-dlp 的 --extractor-args（可多项）
-    # 例如启用 PO Token Provider plugin（WPC）后可加：
-    # extractor_args:
-    #   - "youtubepot-wpc:browser=edge"
-    extractor_args: []
-    # PO Token Provider plugin（推荐在频繁 403 / m3u8 分片下载失败时启用）
-    # Windows 可尝试: yt-dlp-getpot-wpc（通常需可交互浏览器）
-    # Ubuntu 24 长期运行建议结合 bgutil provider（按 README 配置）
-    po_token_provider_enabled: false
-    # true 时，启动自动执行 pip 安装/升级插件包（安装到当前 Python/venv）
-    po_token_provider_auto_install: false
-    # 可填一个或多个插件包名，例如：
-    # - yt-dlp-getpot-wpc
-    po_token_provider_packages: []
-    # true 时，启动将尝试做一次 verbose 校验并输出是否发现 PO Token provider
-    po_token_provider_verify: false
-
-  translation:
-    max_title_length: 70
-    style_prompt: "适合B站的中文标题，简洁、自然、不夸张"
-    glossary:
-      Brawl Stars: 荒野乱斗
-      Hypercharge: 终极技能
-
+ai:
+  provider: deepseek
+  model: deepseek-v4-flash
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+youtube:
+  cookies: data/youtube_cookies.txt
+  cookies_from_browser: null
+  extractor_args: []
+translation:
+  source_lang: en
+  target_lang: zh-CN
+  max_title_length: 70
+  subtitle_batch_size: 30
+  style_prompt: 适合B站的中文标题，简洁、自然、不夸张
+  glossary:
+    Brawl Stars: 荒野乱斗
+    Hypercharge: 终极技能
+subtitle_style:
+  font_cn: Noto Sans CJK SC
+  font_en: Arial
+  cn_font_ratio: 0.05
+  en_font_ratio: 0.028
+  cn_margin_ratio: 0.076
+  en_margin_ratio: 0.039
+  cn_outline_ratio: 0.0038
+  en_outline_ratio: 0.0028
 bilibili:
-  cookies: ./cookies.json
+  cookies: ./data/bilibili_cookies.json
   executable: biliup
   user_cookie_arg: -u
+  default_tags:
+  - 搬运
+  - 翻译
+  default_tid: 4
+  title_prefix: ''
   extra_args: []
   upload:
     copyright: 2
     source: youtube
     line: AUTO
-
-channels:
-  - name: Spike
-    yt_channel_id: UCDK_xfjSLNkgG9NBx6XNBFw
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Spike】"
-    enabled: true
-  - name: ❄️Pika❄️
-    yt_channel_id: UCL_HLSabjn3dwf3R8JBJ45w
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【❄️Pika❄️】"
-    enabled: true
-  - name: Hyra
-    yt_channel_id: UCU1Ag9C12YZFKY2HpNJr_3Q
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Hyra】"
-    enabled: true
-  - name: Lex
-    yt_channel_id: UC4yh9rj_cPT77it63N14HQg
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Lex】"
-    enabled: true
-  - name: SpenLC
-    yt_channel_id: UCsuS8BRN4y6_QoBvAqTtSSg
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【SpenLC】"
-    enabled: true
-  - name: Brawl Stars
-    yt_channel_id: UCooVYzDxdwTtGYAkcPmOgOw
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Brawl Stars】"
-    enabled: true  
-  - name: CryingMan
-    yt_channel_id: UCGShu88Lh2ZAtXX0qbV9fXA
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【CryingMan】"
-    enabled: true
-  - name: iRayyQu🖤
-    yt_channel_id: UCVjgSCVQ_TNz_A-K3Q8f2YA
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【iRayyQu】"
-    enabled: true
-  - name: Anil14
-    yt_channel_id: UCPUqwlQ_nM22OhP36Dd8K-Q
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Anil14】"
-    enabled: true
-  - name: Physic
-    yt_channel_id: UCO7kefTlpAAHoRYh-ZKtfSw
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【Physic】"
-    enabled: true
-  - name: SnakeThug - Brawl Stars
-    yt_channel_id: UC0gjNuGmsefdBzCotZk_31Q
-    bili_tags: ["荒野乱斗"]
-    bili_tid: 4
-    title_prefix: "【SnakeThug】"
-    enabled: true  
