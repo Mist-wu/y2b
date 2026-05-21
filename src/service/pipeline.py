@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -111,8 +110,18 @@ class SingleVideoPipeline:
                     "channel": meta.get("channel"),
                     "uploader": meta.get("uploader"),
                     "channel_id": meta.get("channel_id"),
+                    "description": meta.get("description"),
                 }
-                bvid = self.uploader.upload(rendered_path, final_title, upload_video, tags=tags, tid=tid)
+                final_tags, final_tid = self._resolve_upload_metadata(
+                    original_title=original_title,
+                    final_title=final_title,
+                    webpage_url=webpage_url,
+                    meta=meta,
+                    cues=cues,
+                    tags=tags,
+                    tid=tid,
+                )
+                bvid = self.uploader.upload(rendered_path, final_title, upload_video, tags=final_tags, tid=final_tid)
                 self.state.update_job(job_id, status="uploaded", progress=100, current_step="上传完成", bvid=bvid)
 
             record = self.state.get_job(job_id) or {}
@@ -129,6 +138,47 @@ class SingleVideoPipeline:
         finally:
             if not keep_files and work_dir and work_dir.exists():
                 self._cleanup_workdir(work_dir, preserve_suffixes={".ass"})
+
+    def _resolve_upload_metadata(
+        self,
+        *,
+        original_title: str,
+        final_title: str,
+        webpage_url: str,
+        meta: dict,
+        cues: list,
+        tags: list[str] | None,
+        tid: int | None,
+    ) -> tuple[list[str] | None, int | None]:
+        final_tags = tags
+        final_tid = tid
+        if not self.config.bilibili.auto_metadata or (final_tags is not None and final_tid is not None):
+            return final_tags, final_tid
+
+        sample = []
+        for cue in cues[:12]:
+            sample.append({"en": cue.text, "zh": cue.translation or ""})
+        payload = {
+            "title": original_title,
+            "translated_title": final_title,
+            "url": webpage_url,
+            "uploader": meta.get("channel") or meta.get("uploader") or meta.get("channel_id") or "",
+            "description": (meta.get("description") or "")[:1000],
+            "subtitle_sample": sample,
+        }
+        try:
+            suggested = self.translator.suggest_bilibili_metadata(payload)
+            if final_tags is None:
+                final_tags = suggested.get("tags")  # type: ignore[assignment]
+            if final_tid is None:
+                final_tid = suggested.get("tid")  # type: ignore[assignment]
+            self.logger.info(
+                f"AI 推荐 Bilibili 元数据: tid={final_tid}({suggested.get('tid_name') or ''}), "
+                f"tags={final_tags}"
+            )
+        except Exception as e:
+            self.logger.warning(f"AI 推荐 Bilibili 元数据失败，使用配置默认值: {e}")
+        return final_tags, final_tid
 
     def _step(self, job_id: str, status: str, progress: int, step: str) -> None:
         self.logger.info(f"[{job_id}] {step}")
