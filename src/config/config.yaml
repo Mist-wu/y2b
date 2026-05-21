@@ -10,8 +10,8 @@ ai:
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
 youtube:
-  cookies: data/youtube_cookies.txt
-  cookies_from_browser: null
+  cookies: null
+  cookies_from_browser: chrome
   extractor_args: []
 translation:
   source_lang: en
@@ -27,7 +27,7 @@ subtitle_style:
   font_en: Arial
   cn_font_ratio: 0.05
   en_font_ratio: 0.028
-  cn_margin_ratio: 0.076
+  cn_margin_ratio: 0.095
   en_margin_ratio: 0.039
   cn_outline_ratio: 0.0038
   en_outline_ratio: 0.0028

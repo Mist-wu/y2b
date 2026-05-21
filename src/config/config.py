@@ -41,7 +41,7 @@ class SubtitleStyleConfig:
     font_en: str = "Arial"
     cn_font_ratio: float = 0.050
     en_font_ratio: float = 0.028
-    cn_margin_ratio: float = 0.076
+    cn_margin_ratio: float = 0.095
     en_margin_ratio: float = 0.039
     cn_outline_ratio: float = 0.0038
     en_outline_ratio: float = 0.0028
@@ -154,7 +154,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
             font_en=str(style_raw.get("font_en", "Arial")),
             cn_font_ratio=float(style_raw.get("cn_font_ratio", 0.050)),
             en_font_ratio=float(style_raw.get("en_font_ratio", 0.028)),
-            cn_margin_ratio=float(style_raw.get("cn_margin_ratio", 0.076)),
+            cn_margin_ratio=float(style_raw.get("cn_margin_ratio", 0.095)),
             en_margin_ratio=float(style_raw.get("en_margin_ratio", 0.039)),
             cn_outline_ratio=float(style_raw.get("cn_outline_ratio", 0.0038)),
             en_outline_ratio=float(style_raw.get("en_outline_ratio", 0.0028)),
