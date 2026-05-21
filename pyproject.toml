@@ -13,7 +13,9 @@ dependencies = [
 	"openai",
 	"python-dotenv",
 	"pyyaml",
+	"quickjs>=1.19.4",
 	"yt-dlp>=2025.12.8",
+	"yt-dlp-ejs>=0.8.0",
 ]
 
 [project.scripts]
@@ -21,3 +23,6 @@ y2b = "src.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["src*"]
+
+[tool.uv.sources]
+yt-dlp = { git = "https://github.com/yt-dlp/yt-dlp.git" }
