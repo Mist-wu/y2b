@@ -35,7 +35,8 @@ subtitle_style:
   cn_font_ratio: 0.05
   en_font_ratio: 0.028
   cn_margin_ratio: 0.095
-  cn_single_line_margin_ratio: 0.083
+  cn_single_line_margin_ratio: 0.078
+  cn_single_line_wrapped_en_margin_ratio: 0.105
   en_margin_ratio: 0.039
   cn_outline_ratio: 0.0038
   en_outline_ratio: 0.0028
@@ -48,8 +49,14 @@ bilibili:
   - 翻译
   default_tid: 4
   title_prefix: ''
+  auto_metadata: true
+  tag_min_count: 1
+  tag_max_count: 4
+  tid_whitelist:
+    36: 知识
+    4: 游戏
   extra_args: []
   upload:
     copyright: 2
     source: youtube
-    line: AUTO
+    line: null

@@ -20,3 +20,9 @@ def test_load_config_supports_env_override(tmp_path, monkeypatch):
 
     assert cfg.ai.model == "deepseek-v4-flash"
     assert cfg.translation.subtitle_batch_size == 12
+
+
+def test_default_bilibili_line_omits_invalid_auto():
+    cfg = load_config()
+
+    assert cfg.bilibili.upload.line is None

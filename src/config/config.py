@@ -60,7 +60,8 @@ class SubtitleStyleConfig(StrictModel):
     cn_font_ratio: float = Field(default=0.050, gt=0)
     en_font_ratio: float = Field(default=0.028, gt=0)
     cn_margin_ratio: float = Field(default=0.095, gt=0)
-    cn_single_line_margin_ratio: float = Field(default=0.083, gt=0)
+    cn_single_line_margin_ratio: float = Field(default=0.078, gt=0)
+    cn_single_line_wrapped_en_margin_ratio: float = Field(default=0.105, gt=0)
     en_margin_ratio: float = Field(default=0.039, gt=0)
     cn_outline_ratio: float = Field(default=0.0038, ge=0)
     en_outline_ratio: float = Field(default=0.0028, ge=0)
@@ -79,6 +80,10 @@ class BilibiliConfig(StrictModel):
     default_tags: list[str] = Field(default_factory=lambda: ["搬运", "翻译"])
     default_tid: int = 4
     title_prefix: str = ""
+    auto_metadata: bool = True
+    tag_min_count: int = Field(default=1, ge=1, le=4)
+    tag_max_count: int = Field(default=4, ge=1, le=4)
+    tid_whitelist: dict[int, str] = Field(default_factory=lambda: {36: "知识", 4: "游戏"})
     extra_args: list[str] = Field(default_factory=list)
     upload: BilibiliUploadConfig = Field(default_factory=BilibiliUploadConfig)
 
