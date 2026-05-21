@@ -3,16 +3,31 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import dotenv
-from openai import OpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
 # Avoid python-dotenv find_dotenv AssertionError when called from stdin.
 dotenv.load_dotenv(dotenv_path=Path(".env"))
+
+
+class LLMAPIError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class LLMRetriableError(LLMAPIError):
+    pass
+
+
+class LLMFatalError(LLMAPIError):
+    pass
 
 
 class BaseLLMClient(ABC):
@@ -48,13 +63,15 @@ def _get_openai_client(base_url: str, api_key: str, timeout: float, max_retries:
 
 
 class OpenAICompatibleLLMClient(BaseLLMClient):
-    def __init__(self, ai_cfg):
+    def __init__(self, ai_cfg, logger=None):
         self.ai_cfg = ai_cfg
+        self.logger = logger
+        # Disable SDK hidden retries; we handle DeepSeek error codes explicitly below.
         self.client = _get_openai_client(
             ai_cfg.base_url,
             self._api_key(ai_cfg),
             float(ai_cfg.timeout),
-            int(ai_cfg.max_retries),
+            0,
         )
 
     def translate_text(self, text: str, *, system_prompt: str, max_tokens: int = 1024) -> str:
@@ -139,8 +156,28 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         if self.ai_cfg.reasoning_effort:
             # Keep disabled by default. Some OpenAI-compatible providers accept this; DeepSeek v4 flash does not need it.
             kwargs["reasoning_effort"] = self.ai_cfg.reasoning_effort
-        resp = self.client.chat.completions.create(**kwargs)
-        return (resp.choices[0].message.content or "").strip()
+
+        max_retries = max(0, int(self.ai_cfg.max_retries))
+        for attempt in range(max_retries + 1):
+            try:
+                resp = self.client.chat.completions.create(**kwargs)
+                return (resp.choices[0].message.content or "").strip()
+            except Exception as e:
+                status_code = _status_code(e)
+                message = _deepseek_error_message(e, status_code)
+                retriable = _is_retriable_error(e, status_code)
+                if not retriable:
+                    raise LLMFatalError(message, status_code=status_code) from e
+                if attempt >= max_retries:
+                    raise LLMRetriableError(message, status_code=status_code) from e
+                wait = min(2 ** attempt, 8)
+                if self.logger:
+                    self.logger.warning(
+                        f"DeepSeek API 暂时不可用，{wait}s 后重试 "
+                        f"({attempt + 1}/{max_retries})：{message}"
+                    )
+                time.sleep(wait)
+        raise LLMRetriableError("DeepSeek API 请求失败，请稍后重试")
 
     def _non_thinking_prompt(self, prompt: str) -> str:
         if self.ai_cfg.reasoning:
@@ -229,6 +266,37 @@ def build_subtitle_translation_prompt(translation_cfg, source_lang: str = "en", 
         f"源语言：{source_lang}，目标语言：{target_lang}。"
         f"{glossary_lines}"
     )
+
+
+def _status_code(exc: Exception) -> int | None:
+    return getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+
+
+def _is_retriable_error(exc: Exception, status_code: int | None) -> bool:
+    if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return True
+    return status_code in {429, 500, 503}
+
+
+def _deepseek_error_message(exc: Exception, status_code: int | None) -> str:
+    code_text = f"{status_code} - " if status_code else ""
+    if status_code == 400:
+        hint = "格式错误：请检查请求体格式"
+    elif status_code == 401:
+        hint = "认证失败：请检查 API key"
+    elif status_code == 402:
+        hint = "余额不足：请充值"
+    elif status_code == 422:
+        hint = "参数错误：请检查模型参数"
+    elif status_code == 429:
+        hint = "请求速率达到上限：请降低并发或稍后重试"
+    elif status_code == 500:
+        hint = "服务器故障：请稍后重试"
+    elif status_code == 503:
+        hint = "服务器繁忙：请稍后重试"
+    else:
+        hint = str(exc)
+    return code_text + hint
 
 
 def _parse_json_value(content: str):
