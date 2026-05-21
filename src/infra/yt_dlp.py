@@ -149,66 +149,6 @@ def probe_youtube_video_access(
     )
 
 
-def probe_youtube_access(
-    channel_id: str,
-    *,
-    cookies_path: str | None = YOUTUBE_COOKIES_PATH,
-    cookies_from_browser: str | None = None,
-    extractor_args: list[str] | None = None,
-):
-    # Kept for compatibility with old imports; the new CLI probes explicit video URLs.
-    heads = fetch_channel_video_heads(
-        channel_id,
-        limit=3,
-        playlist_start=1,
-        cookies_path=cookies_path,
-        cookies_from_browser=cookies_from_browser,
-        extractor_args=extractor_args,
-    )
-    if not heads:
-        raise RuntimeError("探针未返回视频列表，可能是 cookies 无效或频道不可访问")
-    fetch_video_metadata(
-        heads[0].get("id"),
-        cookies_path=cookies_path,
-        cookies_from_browser=cookies_from_browser,
-        extractor_args=extractor_args,
-    )
-
-
-def fetch_channel_video_heads(
-    channel_id: str,
-    *,
-    limit: int = 20,
-    playlist_start: int = 1,
-    cookies_path: str | None = YOUTUBE_COOKIES_PATH,
-    cookies_from_browser: str | None = None,
-    extractor_args: list[str] | None = None,
-) -> list[dict]:
-    playlist_end = playlist_start + max(limit, 0) - 1
-    cmd = [
-        _yt_dlp_bin(),
-        f"https://www.youtube.com/channel/{channel_id}/videos",
-        "--flat-playlist",
-        "--dump-json",
-        "--no-warnings",
-        "--ignore-errors",
-        "--playlist-start",
-        str(playlist_start),
-        "--playlist-end",
-        str(playlist_end),
-        *_build_js_runtime_args(),
-        *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
-        *_build_extractor_args(extractor_args),
-    ]
-    result = _run_yt_dlp(cmd, action="拉取频道列表")
-    videos: list[dict] = []
-    for line in (result.stdout or "").splitlines():
-        line = line.strip()
-        if line:
-            videos.append(json.loads(line))
-    return videos
-
-
 def normalize_video_url(video_url_or_id: str) -> str:
     text = str(video_url_or_id).strip()
     if text.startswith("http://") or text.startswith("https://"):
