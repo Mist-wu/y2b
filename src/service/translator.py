@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.infra.ai_client import segment_subtitle_ranges, translate_subtitle_lines, translate_title
+from src.infra.ai_client import segment_subtitle_ranges, suggest_bilibili_metadata, translate_subtitle_lines, translate_title
 
 
 class TranslatorService:
@@ -17,10 +17,6 @@ class TranslatorService:
         except Exception as e:
             self.logger.warning(f"标题翻译失败，使用原文回退: {e}")
             return prefix + title
-
-    # Backward-compatible alias.
-    def translate(self, title: str, prefix: str = "") -> str:
-        return self.translate_title(title, prefix)
 
     def translate_subtitle_batch(
         self,
@@ -48,6 +44,42 @@ class TranslatorService:
             ai_cfg=self.config.ai,
             source_lang=source_lang or self.config.translation.source_lang,
         )
+
+    def suggest_bilibili_metadata(self, payload: dict) -> dict[str, object]:
+        raw = suggest_bilibili_metadata(
+            payload,
+            ai_cfg=self.config.ai,
+            tid_whitelist=self.config.bilibili.tid_whitelist,
+            tag_min_count=self.config.bilibili.tag_min_count,
+            tag_max_count=self.config.bilibili.tag_max_count,
+        )
+        return self._normalize_bilibili_metadata(raw)
+
+    def _normalize_bilibili_metadata(self, raw: dict) -> dict[str, object]:
+        whitelist = self.config.bilibili.tid_whitelist
+        tid = int(raw.get("tid") or self.config.bilibili.default_tid)
+        if tid not in whitelist:
+            tid = self.config.bilibili.default_tid if self.config.bilibili.default_tid in whitelist else next(iter(whitelist))
+
+        tags: list[str] = []
+        raw_tags = raw.get("tags") or []
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        for item in raw_tags:
+            tag = str(item).strip().replace("#", "").replace(",", "").replace("，", "")
+            if tag and tag not in tags:
+                tags.append(tag[:20])
+
+        max_count = self.config.bilibili.tag_max_count
+        min_count = self.config.bilibili.tag_min_count
+        fallback_tags = [str(t).strip() for t in self.config.bilibili.default_tags if str(t).strip()]
+        for tag in fallback_tags:
+            if len(tags) >= min_count:
+                break
+            if tag not in tags:
+                tags.append(tag)
+        tags = tags[:max_count]
+        return {"tid": tid, "tags": tags, "tid_name": whitelist.get(tid, "")}
 
     def _post_process_title(self, translated: str, fallback_title: str) -> str:
         text = (translated or "").strip()
