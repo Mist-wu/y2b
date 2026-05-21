@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n已中断。", file=sys.stderr)
         return 130
     except Exception as e:
-        console.print(f"[bold red]错误:[/] {e}", file=sys.stderr)
+        Console(stderr=True).print(f"[bold red]错误:[/] {e}")
         return 1
 
 
