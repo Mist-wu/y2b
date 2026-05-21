@@ -1,22 +1,10 @@
+from __future__ import annotations
+
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Any
-
-
-TERMINAL_STATUSES = {
-    "uploaded",
-    "skipped_before_start",
-    "skipped_filtered",
-    "failed_final",
-}
-
-RETRYABLE_STATUSES = {
-    "queued",
-    "downloading",
-    "downloaded",
-    "failed_retryable",
-}
 
 
 class StateRepository:
@@ -25,9 +13,32 @@ class StateRepository:
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self._init_tables()
+        self._migrate_jobs_table()
         self._migrate_videos_table()
 
     def _init_tables(self):
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id TEXT PRIMARY KEY,
+                video_id TEXT,
+                url TEXT NOT NULL,
+                title TEXT,
+                translated_title TEXT,
+                status TEXT NOT NULL,
+                progress INTEGER DEFAULT 0,
+                current_step TEXT,
+                video_path TEXT,
+                subtitle_path TEXT,
+                rendered_path TEXT,
+                bvid TEXT,
+                error TEXT,
+                created_at INTEGER,
+                updated_at INTEGER
+            )
+            """
+        )
+        # Kept only for compatibility with older database files.
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS videos (
@@ -48,10 +59,31 @@ class StateRepository:
         )
         self.conn.commit()
 
-    def _migrate_videos_table(self):
-        cols = {
-            row["name"] for row in self.conn.execute("PRAGMA table_info(videos)").fetchall()
+    def _migrate_jobs_table(self):
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        additions: dict[str, str] = {
+            "video_id": "TEXT",
+            "url": "TEXT",
+            "title": "TEXT",
+            "translated_title": "TEXT",
+            "status": "TEXT",
+            "progress": "INTEGER DEFAULT 0",
+            "current_step": "TEXT",
+            "video_path": "TEXT",
+            "subtitle_path": "TEXT",
+            "rendered_path": "TEXT",
+            "bvid": "TEXT",
+            "error": "TEXT",
+            "created_at": "INTEGER",
+            "updated_at": "INTEGER",
         }
+        for col, col_type in additions.items():
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_type}")
+        self.conn.commit()
+
+    def _migrate_videos_table(self):
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(videos)").fetchall()}
         additions: dict[str, str] = {
             "channel_id": "TEXT",
             "title": "TEXT",
@@ -83,115 +115,57 @@ class StateRepository:
         )
         self.conn.commit()
 
-    def set_run_startup_ts(self, ts: int | None = None) -> int:
-        run_ts = int(time.time()) if ts is None else int(ts)
-        self.set_meta("startup_cutoff_ts", str(run_ts))
-        return run_ts
-
-    def get_status(self, video_id: str) -> str | None:
-        cur = self.conn.execute(
-            "SELECT status FROM videos WHERE video_id=?",
-            (video_id,),
+    def create_job(self, *, url: str, job_id: str | None = None) -> str:
+        now = int(time.time())
+        jid = job_id or uuid.uuid4().hex[:12]
+        self.conn.execute(
+            """
+            INSERT INTO jobs(job_id, url, status, progress, current_step, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (jid, url, "queued", 0, "已创建任务", now, now),
         )
+        self.conn.commit()
+        return jid
+
+    def update_job(self, job_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = int(time.time())
+        keys = list(fields.keys())
+        sets = ", ".join(f"{k}=?" for k in keys)
+        values = [fields[k] for k in keys]
+        values.append(job_id)
+        self.conn.execute(f"UPDATE jobs SET {sets} WHERE job_id=?", values)
+        self.conn.commit()
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        cur = self.conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,))
+        row = cur.fetchone()
+        return None if row is None else dict(row)
+
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        cur = self.conn.execute(
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def mark_job_failed(self, job_id: str, error: str) -> None:
+        self.update_job(job_id, status="failed", error=error, current_step="失败")
+
+    # Legacy video methods retained so old database records can still be inspected.
+    def get_status(self, video_id: str) -> str | None:
+        cur = self.conn.execute("SELECT status FROM videos WHERE video_id=?", (video_id,))
         row = cur.fetchone()
         return None if row is None else row["status"]
 
     def get_record(self, video_id: str) -> dict[str, Any] | None:
-        cur = self.conn.execute(
-            "SELECT * FROM videos WHERE video_id=?",
-            (video_id,),
-        )
+        cur = self.conn.execute("SELECT * FROM videos WHERE video_id=?", (video_id,))
         row = cur.fetchone()
         return None if row is None else dict(row)
 
-    def exists(self, video_id: str) -> bool:
-        return self.get_status(video_id) is not None
-
-    def can_process(self, video_id: str) -> bool:
-        status = self.get_status(video_id)
-        return status is None or status in RETRYABLE_STATUSES
-
-    def mark_queued(self, video: dict[str, Any]):
-        self._upsert_from_video(video, status="queued")
-
-    def mark_downloading(self, video: dict[str, Any]):
-        self._upsert_from_video(video, status="downloading")
-
-    def mark_downloaded(self, video: dict[str, Any]):
-        self._upsert_from_video(video, status="downloaded")
-
-    def mark_skipped_before_start(self, video: dict[str, Any], reason: str = "published_before_startup"):
-        self._upsert_from_video(video, status="skipped_before_start", error=reason)
-
-    def mark_skipped_filtered(self, video: dict[str, Any], reason: str):
-        self._upsert_from_video(video, status="skipped_filtered", error=reason)
-
-    def mark_uploaded(self, video: dict[str, Any], bvid: str):
-        self._upsert_from_video(video, status="uploaded", bvid=bvid, error=None)
-
-    def mark_failed(self, video: dict[str, Any], error: str, retryable: bool):
-        status = "failed_retryable" if retryable else "failed_final"
-        self._upsert_from_video(video, status=status, error=error)
-
-    def _upsert_from_video(
-        self,
-        video: dict[str, Any],
-        *,
-        status: str,
-        bvid: str | None = None,
-        error: str | None = None,
-    ):
-        self._upsert(
-            video_id=video["id"],
-            status=status,
-            bvid=bvid,
-            error=error,
-            channel_id=video.get("channel_id"),
-            title=video.get("title"),
-            video_url=video.get("webpage_url"),
-            published_ts=video.get("published_ts"),
-        )
-
-    def _upsert(
-        self,
-        *,
-        video_id: str,
-        status: str,
-        bvid: str | None = None,
-        error: str | None = None,
-        channel_id: str | None = None,
-        title: str | None = None,
-        video_url: str | None = None,
-        published_ts: int | None = None,
-    ):
-        now_ts = int(time.time())
-        self.conn.execute(
-            """
-            INSERT INTO videos(
-                video_id, status, bvid, error, channel_id, title, video_url, published_ts, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(video_id)
-            DO UPDATE SET
-                status=excluded.status,
-                bvid=COALESCE(excluded.bvid, videos.bvid),
-                error=excluded.error,
-                channel_id=COALESCE(excluded.channel_id, videos.channel_id),
-                title=COALESCE(excluded.title, videos.title),
-                video_url=COALESCE(excluded.video_url, videos.video_url),
-                published_ts=COALESCE(excluded.published_ts, videos.published_ts),
-                updated_at=excluded.updated_at
-            """,
-            (
-                video_id,
-                status,
-                bvid,
-                error,
-                channel_id,
-                title,
-                video_url,
-                published_ts,
-                now_ts,
-            ),
-        )
-        self.conn.commit()
+    def set_run_startup_ts(self, ts: int | None = None) -> int:
+        run_ts = int(time.time()) if ts is None else int(ts)
+        self.set_meta("startup_cutoff_ts", str(run_ts))
+        return run_ts
