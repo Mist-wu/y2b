@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import re
 import subprocess
@@ -6,7 +8,7 @@ from pathlib import Path
 
 from src.infra.cli_path import resolve_cli
 
-YOUTUBE_COOKIES_PATH = str(Path(__file__).parent.parent.parent / "www.youtube.com_cookies.txt")
+YOUTUBE_COOKIES_PATH = str(Path(__file__).parent.parent.parent / "data" / "youtube_cookies.txt")
 HLS_FRAGMENT_403_PATTERN = re.compile(r"HTTP Error 403: Forbidden.*fragment", re.IGNORECASE)
 HLS_FRAGMENT_SKIP_PATTERN = re.compile(r"fragment not found; Skipping fragment", re.IGNORECASE)
 
@@ -25,9 +27,8 @@ def _build_extractor_args(args: list[str] | None) -> list[str]:
     cli_args: list[str] = []
     for item in args:
         text = str(item or "").strip()
-        if not text:
-            continue
-        cli_args.extend(["--extractor-args", text])
+        if text:
+            cli_args.extend(["--extractor-args", text])
     return cli_args
 
 
@@ -107,8 +108,7 @@ def _run_yt_dlp_stream(
                     pass
             merged = "\n".join(merged_lines).strip()
             raise RuntimeError(
-                "yt-dlp 下载视频失败: 检测到 HLS(m3u8) 分片连续 403/丢片，已快速中止并交给外层重试。"
-                " 建议优先使用 cookies_from_browser，并更新 yt-dlp；若仍频繁发生，可能需要 PO Token。"
+                "yt-dlp 下载视频失败: 检测到 HLS(m3u8) 分片连续 403/丢片，已快速中止。"
                 + (f"\n最近输出:\n{merged}" if merged else "")
             )
 
@@ -125,6 +125,21 @@ def _yt_dlp_bin() -> str:
     return resolved
 
 
+def probe_youtube_video_access(
+    video_url: str,
+    *,
+    cookies_path: str | None = YOUTUBE_COOKIES_PATH,
+    cookies_from_browser: str | None = None,
+    extractor_args: list[str] | None = None,
+) -> None:
+    fetch_video_metadata(
+        video_url,
+        cookies_path=cookies_path,
+        cookies_from_browser=cookies_from_browser,
+        extractor_args=extractor_args,
+    )
+
+
 def probe_youtube_access(
     channel_id: str,
     *,
@@ -132,8 +147,7 @@ def probe_youtube_access(
     cookies_from_browser: str | None = None,
     extractor_args: list[str] | None = None,
 ):
-    # Runtime path needs both channel list and per-video detail access.
-    # Only validating --flat-playlist can produce false positives.
+    # Kept for compatibility with old imports; the new CLI probes explicit video URLs.
     heads = fetch_channel_video_heads(
         channel_id,
         limit=3,
@@ -144,25 +158,12 @@ def probe_youtube_access(
     )
     if not heads:
         raise RuntimeError("探针未返回视频列表，可能是 cookies 无效或频道不可访问")
-
-    last_err: Exception | None = None
-    for head in heads:
-        video_id = str(head.get("id") or "").strip()
-        if not video_id:
-            continue
-        try:
-            fetch_video_metadata(
-                video_id,
-                cookies_path=cookies_path,
-                cookies_from_browser=cookies_from_browser,
-                extractor_args=extractor_args,
-            )
-            return
-        except Exception as e:
-            last_err = e
-            continue
-
-    raise RuntimeError(f"探针无法通过视频详情校验: {last_err or 'no valid video id'}")
+    fetch_video_metadata(
+        heads[0].get("id"),
+        cookies_path=cookies_path,
+        cookies_from_browser=cookies_from_browser,
+        extractor_args=extractor_args,
+    )
 
 
 def fetch_channel_video_heads(
@@ -193,10 +194,16 @@ def fetch_channel_video_heads(
     videos: list[dict] = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
-        if not line:
-            continue
-        videos.append(json.loads(line))
+        if line:
+            videos.append(json.loads(line))
     return videos
+
+
+def normalize_video_url(video_url_or_id: str) -> str:
+    text = str(video_url_or_id).strip()
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+    return f"https://www.youtube.com/watch?v={text}"
 
 
 def fetch_video_metadata(
@@ -206,11 +213,7 @@ def fetch_video_metadata(
     cookies_from_browser: str | None = None,
     extractor_args: list[str] | None = None,
 ) -> dict:
-    url = (
-        video_url_or_id
-        if video_url_or_id.startswith("http://") or video_url_or_id.startswith("https://")
-        else f"https://www.youtube.com/watch?v={video_url_or_id}"
-    )
+    url = normalize_video_url(video_url_or_id)
     cmd = [
         _yt_dlp_bin(),
         url,
@@ -224,8 +227,7 @@ def fetch_video_metadata(
     content = (result.stdout or "").strip()
     if not content:
         raise RuntimeError("视频详情为空")
-    first_line = content.splitlines()[0].strip()
-    return json.loads(first_line)
+    return json.loads(content.splitlines()[0].strip())
 
 
 def download_video(
@@ -250,6 +252,8 @@ def download_video(
         "3",
         "--fragment-retries",
         "3",
+        "--merge-output-format",
+        "mp4",
         "--extractor-args",
         "youtube:player_client=default,-ios",
         *user_extractor_args,
@@ -257,7 +261,6 @@ def download_video(
         url,
     ]
 
-    # First pass: avoid HLS(m3u8) formats when possible, as they are more prone to fragment 403.
     non_hls_cmd = [
         *common_args[:-1],
         "-f",
@@ -267,13 +270,8 @@ def download_video(
     ]
     try:
         if logger:
-            logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8) 格式（更稳定）")
-        _run_yt_dlp_stream(
-            non_hls_cmd,
-            action="下载视频",
-            logger=logger,
-            hls_403_fast_fail_threshold=6,
-        )
+            logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8) 格式")
+        _run_yt_dlp_stream(non_hls_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=6)
         return
     except RuntimeError as e:
         err_text = str(e)
@@ -286,7 +284,7 @@ def download_video(
         if not no_non_hls_match:
             raise
         if logger:
-            logger.warning("[yt-dlp] 未找到可用非 HLS 格式，回退到通用格式（可能使用 HLS）")
+            logger.warning("[yt-dlp] 未找到可用非 HLS 格式，回退到通用格式")
 
     fallback_cmd = [
         *common_args[:-1],
@@ -296,9 +294,56 @@ def download_video(
         "1",
         common_args[-1],
     ]
-    _run_yt_dlp_stream(
-        fallback_cmd,
-        action="下载视频",
-        logger=logger,
-        hls_403_fast_fail_threshold=8,
+    _run_yt_dlp_stream(fallback_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=8)
+
+
+def download_subtitle(
+    url: str,
+    output_dir: str | Path,
+    *,
+    source_lang: str = "en",
+    video_id: str | None = None,
+    cookies_path: str | None = YOUTUBE_COOKIES_PATH,
+    cookies_from_browser: str | None = None,
+    extractor_args: list[str] | None = None,
+    logger=None,
+) -> Path:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    template_name = video_id or "subtitle"
+    out_template = str(out_dir / f"{template_name}.%(ext)s")
+    lang_expr = source_lang if source_lang.endswith(".*") else f"{source_lang}.*,{source_lang}"
+    cmd = [
+        _yt_dlp_bin(),
+        normalize_video_url(url),
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        lang_expr,
+        "--sub-format",
+        "vtt/srt/best",
+        "--no-playlist",
+        "--no-warnings",
+        "-o",
+        out_template,
+        *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
+        *_build_extractor_args(extractor_args),
+    ]
+    if logger:
+        logger.info("[yt-dlp] 下载字幕: " + " ".join(cmd))
+    _run_yt_dlp(cmd, action="下载字幕")
+
+    candidates = sorted(
+        [
+            *out_dir.glob(f"{template_name}.{source_lang}*.vtt"),
+            *out_dir.glob(f"{template_name}.{source_lang}*.srt"),
+            *out_dir.glob(f"{template_name}*.vtt"),
+            *out_dir.glob(f"{template_name}*.srt"),
+        ],
+        key=lambda p: (0 if f".{source_lang}" in p.name else 1, len(p.name)),
     )
+    for path in candidates:
+        if path.exists() and path.stat().st_size > 0:
+            return path
+    raise RuntimeError(f"未找到 {source_lang} 字幕。该视频可能没有官方/自动英文字幕。")
