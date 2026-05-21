@@ -14,7 +14,6 @@ class StateRepository:
         self.conn.row_factory = sqlite3.Row
         self._init_tables()
         self._migrate_jobs_table()
-        self._migrate_videos_table()
 
     def _init_tables(self):
         self.conn.execute(
@@ -82,20 +81,6 @@ class StateRepository:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_type}")
         self.conn.commit()
 
-    def _migrate_videos_table(self):
-        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(videos)").fetchall()}
-        additions: dict[str, str] = {
-            "channel_id": "TEXT",
-            "title": "TEXT",
-            "video_url": "TEXT",
-            "published_ts": "INTEGER",
-            "updated_at": "INTEGER",
-        }
-        for col, col_type in additions.items():
-            if col not in cols:
-                self.conn.execute(f"ALTER TABLE videos ADD COLUMN {col} {col_type}")
-        self.conn.commit()
-
     def close(self):
         self.conn.close()
 
@@ -153,19 +138,3 @@ class StateRepository:
 
     def mark_job_failed(self, job_id: str, error: str) -> None:
         self.update_job(job_id, status="failed", error=error, current_step="失败")
-
-    # Legacy video methods retained so old database records can still be inspected.
-    def get_status(self, video_id: str) -> str | None:
-        cur = self.conn.execute("SELECT status FROM videos WHERE video_id=?", (video_id,))
-        row = cur.fetchone()
-        return None if row is None else row["status"]
-
-    def get_record(self, video_id: str) -> dict[str, Any] | None:
-        cur = self.conn.execute("SELECT * FROM videos WHERE video_id=?", (video_id,))
-        row = cur.fetchone()
-        return None if row is None else dict(row)
-
-    def set_run_startup_ts(self, ts: int | None = None) -> int:
-        run_ts = int(time.time()) if ts is None else int(ts)
-        self.set_meta("startup_cutoff_ts", str(run_ts))
-        return run_ts
