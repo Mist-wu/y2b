@@ -8,6 +8,10 @@ from src.infra.cli_path import resolve_cli
 
 
 def _bin(name: str) -> str:
+    # Prefer ffmpeg-full on macOS/Homebrew because the default ffmpeg formula may not include libass.
+    full_candidate = Path(f"/opt/homebrew/opt/ffmpeg-full/bin/{name}")
+    if full_candidate.is_file():
+        return str(full_candidate)
     resolved = resolve_cli(name)
     if not resolved:
         raise RuntimeError(f"未找到 {name}，请先安装 ffmpeg。")
@@ -53,7 +57,7 @@ def burn_ass_subtitle(
 ) -> Path:
     output = Path(output_video)
     output.parent.mkdir(parents=True, exist_ok=True)
-    filter_arg = f"ass={_escape_filter_path(Path(ass_path).resolve())}"
+    filter_arg = f"ass=filename='{_escape_filter_path(Path(ass_path).resolve())}'"
     cmd = [
         _bin("ffmpeg"),
         "-y",
