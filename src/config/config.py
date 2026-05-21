@@ -60,6 +60,7 @@ class SubtitleStyleConfig(StrictModel):
     cn_font_ratio: float = Field(default=0.050, gt=0)
     en_font_ratio: float = Field(default=0.028, gt=0)
     cn_margin_ratio: float = Field(default=0.095, gt=0)
+    cn_single_line_margin_ratio: float = Field(default=0.083, gt=0)
     en_margin_ratio: float = Field(default=0.039, gt=0)
     cn_outline_ratio: float = Field(default=0.0038, ge=0)
     en_outline_ratio: float = Field(default=0.0028, ge=0)
