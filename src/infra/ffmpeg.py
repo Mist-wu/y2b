@@ -53,11 +53,16 @@ def burn_ass_subtitle(
     input_video: str | Path,
     ass_path: str | Path,
     output_video: str | Path,
+    fonts_dir: str | Path | None = None,
     logger=None,
 ) -> Path:
     output = Path(output_video)
     output.parent.mkdir(parents=True, exist_ok=True)
     filter_arg = f"ass=filename='{_escape_filter_path(Path(ass_path).resolve())}'"
+    if fonts_dir:
+        font_path = Path(fonts_dir)
+        if font_path.exists():
+            filter_arg += f":fontsdir='{_escape_filter_path(font_path.resolve())}'"
     cmd = [
         _bin("ffmpeg"),
         "-y",

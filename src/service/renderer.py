@@ -6,7 +6,8 @@ from src.infra.ffmpeg import burn_ass_subtitle, get_video_resolution
 
 
 class RenderService:
-    def __init__(self, logger=None):
+    def __init__(self, config=None, logger=None):
+        self.config = config
         self.logger = logger
 
     def get_resolution(self, video_path: str | Path) -> tuple[int, int]:
@@ -17,5 +18,6 @@ class RenderService:
             input_video=input_video,
             ass_path=ass_path,
             output_video=output_video,
+            fonts_dir=getattr(getattr(self.config, "subtitle_style", None), "fonts_dir", None),
             logger=self.logger,
         )

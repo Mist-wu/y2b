@@ -25,7 +25,7 @@ class SingleVideoPipeline:
         )
         self.translator = TranslatorService(config, logger)
         self.subtitle = SubtitleService(config, self.translator, logger)
-        self.renderer = RenderService(logger)
+        self.renderer = RenderService(config, logger)
         self.uploader = UploaderService(config)
 
     def run(
@@ -85,7 +85,7 @@ class SingleVideoPipeline:
             cues = self.subtitle.parse(raw_subtitle)
             if not cues:
                 raise RuntimeError("字幕解析结果为空")
-            self.subtitle.translate_cues(cues, source_lang=source_lang, target_lang=target_lang)
+            cues = self.subtitle.translate_cues(cues, source_lang=source_lang, target_lang=target_lang)
 
             self._step(job_id, "rendering_subtitle", 70, "生成双语 ASS 字幕并压制")
             width, height = self.renderer.get_resolution(downloaded_video)

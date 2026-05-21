@@ -101,6 +101,17 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
         )
     )
 
+    fonts_dir = getattr(config.subtitle_style, "fonts_dir", None)
+    if fonts_dir:
+        font_path = Path(fonts_dir)
+        results.append(
+            CheckResult(
+                "subtitle fonts",
+                font_path.exists() and any(font_path.glob("*.*tf")),
+                str(font_path),
+            )
+        )
+
     for directory in (config.download_dir, config.output_dir, config.log_dir, str(Path(config.state_db).parent)):
         try:
             Path(directory).mkdir(parents=True, exist_ok=True)
