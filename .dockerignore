@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+data/*.json
+data/*.txt
+logs
+downloads
+output
+y2b.egg-info
+.pytest_cache
+.DS_Store
