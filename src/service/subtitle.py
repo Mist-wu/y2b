@@ -23,8 +23,10 @@ class SubtitleService:
     def parse(self, path: str | Path) -> list[SubtitleCue]:
         path = Path(path)
         if path.suffix.lower() == ".srt":
-            return self._parse_srt(path)
-        return self._parse_vtt(path)
+            cues = self._parse_srt(path)
+        else:
+            cues = self._parse_vtt(path)
+        return self._post_process_cues(cues)
 
     def translate_cues(
         self,
@@ -40,7 +42,7 @@ class SubtitleService:
             lines = [cue.text for cue in batch]
             if self.logger:
                 self.logger.info(f"翻译字幕批次 {i // batch_size + 1}: {len(lines)} 条")
-            translations = self.translator.translate_subtitle_batch(
+            translations = self._translate_lines_resilient(
                 lines,
                 source_lang=source_lang,
                 target_lang=target_lang,
@@ -118,15 +120,94 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             start, end = self._parse_time_range(line)
             i += 1
+            # YouTube VTT may put a whitespace-only line immediately after the timing line.
+            # Treat leading blank lines as cue padding, not as cue terminators.
+            while i < len(lines) and not lines[i].strip():
+                i += 1
             body: list[str] = []
             while i < len(lines) and lines[i].strip():
                 body.append(lines[i].strip())
                 i += 1
-            clean = self._clean_text(" ".join(body))
-            if clean:
+            clean = self._clean_text(self._pick_vtt_body_text(body))
+            if clean and (end - start) >= 0.2:
                 self._append_cue(cues, SubtitleCue(start=start, end=end, text=clean))
             i += 1
         return cues
+
+    def _post_process_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        cues = self._merge_sentence_fragments(cues)
+        cues = self._close_short_gaps(cues)
+        return cues
+
+    def _merge_sentence_fragments(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        """Merge word/phrase-level auto captions into sentence-like subtitle units.
+
+        YouTube auto captions are often split every 1-2 seconds, which causes Chinese
+        translations to become fragments like "方法，...".  We merge adjacent cues
+        before translation so each translated subtitle changes closer to sentence boundaries.
+        """
+        if not cues:
+            return []
+
+        max_gap = 0.45
+        max_duration = 5.2
+        max_chars = 100
+        max_words = 17
+
+        merged: list[SubtitleCue] = []
+        current = SubtitleCue(start=cues[0].start, end=cues[0].end, text=cues[0].text)
+
+        for cue in cues[1:]:
+            gap = cue.start - current.end
+            combined_text = f"{current.text} {cue.text}".strip()
+            combined_duration = cue.end - current.start
+            should_merge = (
+                gap <= max_gap
+                and not self._looks_sentence_complete(current.text)
+                and combined_duration <= max_duration
+                and len(combined_text) <= max_chars
+                and len(combined_text.split()) <= max_words
+            )
+            if should_merge:
+                current.end = max(current.end, cue.end)
+                current.text = combined_text
+                continue
+            merged.append(current)
+            current = SubtitleCue(start=cue.start, end=cue.end, text=cue.text)
+
+        merged.append(current)
+        if self.logger and len(merged) != len(cues):
+            self.logger.info(f"字幕按句合并: {len(cues)} -> {len(merged)} 条")
+        return merged
+
+    def _close_short_gaps(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        """Remove tiny blank flashes between adjacent subtitles.
+
+        If two subtitles are separated by only a very short gap, extend the previous
+        subtitle to the next subtitle's start time so the screen transitions directly.
+        """
+        if len(cues) < 2:
+            return cues
+        threshold = 0.30
+        for prev, nxt in zip(cues, cues[1:]):
+            gap = nxt.start - prev.end
+            if 0 <= gap <= threshold:
+                prev.end = nxt.start
+            elif -threshold <= gap < 0:
+                prev.end = nxt.start
+        return cues
+
+    def _looks_sentence_complete(self, text: str) -> bool:
+        text = text.strip()
+        if not text:
+            return False
+        if re.search(r"[.!?。！？…]['\")\]]*$", text):
+            # Avoid treating common abbreviations as sentence endings.
+            lower = text.lower()
+            if re.search(r"\b(?:mr|mrs|ms|dr|prof|inc|ltd|vs|etc)\.$", lower):
+                return False
+            return True
+        return False
 
     def _parse_srt(self, path: Path) -> list[SubtitleCue]:
         text = path.read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
@@ -141,16 +222,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             start, end = self._parse_time_range(rows[timing_idx])
             clean = self._clean_text(" ".join(rows[timing_idx + 1 :]))
-            if clean:
+            if clean and (end - start) >= 0.2:
                 self._append_cue(cues, SubtitleCue(start=start, end=end, text=clean))
         return cues
 
+    def _translate_lines_resilient(self, lines: list[str], *, source_lang: str, target_lang: str) -> list[str]:
+        try:
+            return self.translator.translate_subtitle_batch(
+                lines,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+        except Exception as e:
+            if len(lines) <= 1:
+                if self.logger:
+                    self.logger.warning(f"单条字幕翻译失败，使用原文回退: {e}")
+                return lines
+            mid = len(lines) // 2
+            if self.logger:
+                self.logger.warning(f"字幕批量翻译失败，拆分重试: {e}")
+            return [
+                *self._translate_lines_resilient(lines[:mid], source_lang=source_lang, target_lang=target_lang),
+                *self._translate_lines_resilient(lines[mid:], source_lang=source_lang, target_lang=target_lang),
+            ]
+
     def _append_cue(self, cues: list[SubtitleCue], cue: SubtitleCue) -> None:
-        # YouTube auto captions may contain exact duplicate overlapping cues.
+        # YouTube auto captions may contain duplicate overlapping cues.
         if cues and cues[-1].text == cue.text and abs(cues[-1].start - cue.start) < 1.0:
             cues[-1].end = max(cues[-1].end, cue.end)
             return
         cues.append(cue)
+
+    def _pick_vtt_body_text(self, body: list[str]) -> str:
+        if not body:
+            return ""
+        # YouTube auto captions often repeat the previous line and put the new timed text on the last line.
+        non_empty = [line.strip() for line in body if line.strip()]
+        if not non_empty:
+            return ""
+        if any(re.search(r"<\d{2}:\d{2}:\d{2}\.\d{3}>", line) for line in non_empty):
+            return non_empty[-1]
+        return " ".join(non_empty)
 
     def _parse_time_range(self, line: str) -> tuple[float, float]:
         left, right = line.split("-->", 1)
