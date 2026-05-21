@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.infra.ai_client import translate_subtitle_lines, translate_title
+from src.infra.ai_client import segment_subtitle_ranges, translate_subtitle_lines, translate_title
 
 
 class TranslatorService:
@@ -35,6 +35,18 @@ class TranslatorService:
             translation_cfg=self.config.translation,
             source_lang=source_lang or self.config.translation.source_lang,
             target_lang=target_lang or self.config.translation.target_lang,
+        )
+
+    def segment_subtitle_batch(
+        self,
+        lines: list[str],
+        *,
+        source_lang: str | None = None,
+    ) -> list[dict[str, int]]:
+        return segment_subtitle_ranges(
+            lines,
+            ai_cfg=self.config.ai,
+            source_lang=source_lang or self.config.translation.source_lang,
         )
 
     def _post_process_title(self, translated: str, fallback_title: str) -> str:
