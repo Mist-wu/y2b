@@ -163,6 +163,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _segment_cues_with_deepseek(self, cues: list[SubtitleCue], *, source_lang: str) -> list[SubtitleCue]:
         if not cues:
             return []
+        cues = self._trim_unusually_long_cues(cues)
         batch_size = int(self.config.translation.segmentation_batch_size)
         concurrency = int(self.config.translation.segmentation_concurrency)
         batches = [(offset, cues[offset : offset + batch_size]) for offset in range(0, len(cues), batch_size)]
@@ -180,6 +181,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             segmented.extend(grouped)
         segmented = self._repair_continuation_boundaries(segmented)
         segmented = self._close_short_gaps(segmented)
+        segmented = self._trim_unusually_long_cues(segmented)
+        segmented = self._merge_orphan_short_cues(segmented)
         if self.logger:
             self.logger.info(f"DeepSeek 智能分句完成: {len(cues)} -> {len(segmented)} 条")
         return segmented
@@ -328,6 +331,99 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             elif -threshold <= gap < 0:
                 prev.end = nxt.start
         return cues
+
+    def _merge_orphan_short_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        """Attach tiny trailing fragments to adjacent subtitles.
+
+        AI/rule segmentation may leave the last noun of a phrase as its own subtitle,
+        e.g. "games incredible" + "story".  If a very short cue touches the
+        previous cue and the combined line is still modest, merge it back.
+        """
+        if len(cues) < 2:
+            return cues
+
+        merged: list[SubtitleCue] = []
+        changed = 0
+        for cue in cues:
+            if not merged:
+                merged.append(cue)
+                continue
+
+            prev = merged[-1]
+            gap = cue.start - prev.end
+            cue_words = re.findall(r"[A-Za-z0-9']+", cue.text)
+            combined_text = self._dedupe_repeated_words(f"{prev.text} {cue.text}".strip())
+            combined_duration = cue.end - prev.start
+            should_attach_to_prev = (
+                0 <= gap <= 0.35
+                and len(cue_words) <= 2
+                and not self._looks_sentence_complete(prev.text)
+                and len(combined_text.split()) <= 22
+                and combined_duration <= 8.0
+            )
+            if should_attach_to_prev:
+                prev.end = cue.end
+                prev.text = combined_text
+                changed += 1
+                continue
+            merged.append(cue)
+
+        if self.logger and changed:
+            self.logger.info(f"已合并孤立短字幕: {changed} 条")
+        return merged
+
+    def _trim_unusually_long_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        """Shorten captions that are likely stretched through trailing silence.
+
+        YouTube auto captions sometimes leave the last word/short phrase visible until
+        the end of the video.  Keep normal long sentences intact, but cap cues whose
+        duration is far longer than their text can reasonably occupy.
+        """
+        if not cues:
+            return []
+
+        trimmed: list[SubtitleCue] = []
+        changed = 0
+        for idx, cue in enumerate(cues):
+            duration = cue.end - cue.start
+            if duration <= 0:
+                trimmed.append(cue)
+                continue
+
+            reasonable_duration = self._reasonable_cue_duration(cue.text)
+            trigger_duration = max(6.0, reasonable_duration * 1.8, reasonable_duration + 1.5)
+            if duration <= trigger_duration:
+                trimmed.append(cue)
+                continue
+
+            new_end = cue.start + reasonable_duration
+            if idx + 1 < len(cues) and cues[idx + 1].start > cue.start:
+                new_end = min(new_end, cues[idx + 1].start)
+            new_end = max(cue.start + 0.35, min(new_end, cue.end))
+            if new_end >= cue.end - 0.25:
+                trimmed.append(cue)
+                continue
+
+            trimmed.append(
+                SubtitleCue(
+                    start=cue.start,
+                    end=new_end,
+                    text=cue.text,
+                    translation=cue.translation,
+                )
+            )
+            changed += 1
+
+        if self.logger and changed:
+            self.logger.info(f"已修剪异常超长字幕: {changed} 条")
+        return trimmed
+
+    def _reasonable_cue_duration(self, text: str) -> float:
+        words = re.findall(r"[A-Za-z0-9']+", text)
+        compact_chars = len(re.sub(r"\s+", "", text))
+        if words:
+            return max(1.2, len(words) * 0.55 + 1.0, compact_chars * 0.04 + 0.8)
+        return max(1.2, compact_chars * 0.12 + 0.8)
 
     def _dedupe_repeated_words(self, text: str) -> str:
         words = text.split()

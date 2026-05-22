@@ -101,6 +101,39 @@ def test_close_short_gaps():
     assert closed[1].start == 1.2
 
 
+def test_merge_orphan_short_cue_attaches_trailing_noun():
+    svc = service()
+    cues = [
+        SubtitleCue(86.96, 90.36, "games incredible"),
+        SubtitleCue(90.36, 91.91, "story"),
+    ]
+
+    merged = svc._merge_orphan_short_cues(cues)
+
+    assert len(merged) == 1
+    assert merged[0].text == "games incredible story"
+    assert merged[0].end == 91.91
+
+
+def test_trim_unusually_long_short_final_cue():
+    svc = service()
+    cues = [SubtitleCue(90.36, 110.35, "story")]
+
+    trimmed = svc._trim_unusually_long_cues(cues)
+
+    assert round(trimmed[0].end, 2) == 91.91
+
+
+def test_trim_unusually_long_keeps_normal_long_sentence():
+    svc = service()
+    text = "is just going through engineering of the car itself as well as engineering of the factory"
+    cues = [SubtitleCue(119.76, 128.36, text)]
+
+    trimmed = svc._trim_unusually_long_cues(cues)
+
+    assert trimmed[0].end == 128.36
+
+
 def test_dedupe_repeated_words():
     svc = service()
     # "welcome to finance" repeated (length of block 3 words)
