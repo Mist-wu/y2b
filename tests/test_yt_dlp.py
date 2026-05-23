@@ -6,6 +6,10 @@ from src.infra.yt_dlp import (
     _collect_download_candidates,
     _ensure_merged_mp4,
     _guess_media_kind_by_extension,
+    build_video_format_selector,
+    download_thumbnail,
+    download_thumbnail_from_metadata,
+    select_best_thumbnail_url,
     validate_youtube_auth,
 )
 
@@ -174,7 +178,10 @@ def test_ensure_merged_mp4_merges_separate_streams(monkeypatch, tmp_path):
 
     monkeypatch.setattr("src.infra.yt_dlp._classify_media_file", fake_classify)
 
+    captured = {}
+
     def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
         out.write_bytes(b"merged")
 
     monkeypatch.setattr("src.infra.yt_dlp.subprocess.run", fake_run)
@@ -183,6 +190,10 @@ def test_ensure_merged_mp4_merges_separate_streams(monkeypatch, tmp_path):
 
     assert result == out
     assert out.read_bytes() == b"merged"
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("-map") : cmd.index("-c")] == ["-map", "0:v:0", "-map", "1:a:0"]
+    assert cmd[cmd.index("-i") + 1] == str(video_path)
+    assert cmd[cmd.index("-i", cmd.index("-i") + 1) + 1] == str(audio_path)
 
 
 def test_ensure_merged_mp4_uses_muxed_candidate_without_merge(monkeypatch, tmp_path):
@@ -214,3 +225,77 @@ def test_ensure_merged_mp4_raises_when_no_video_candidate(monkeypatch, tmp_path)
         assert "未找到视频文件" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_select_best_thumbnail_url_prefers_highest_width():
+    meta = {
+        "thumbnail": "https://i.ytimg.com/vi/demo/hqdefault.jpg",
+        "thumbnails": [
+            {"url": "https://i.ytimg.com/vi/demo/default.jpg", "width": 120},
+            {"url": "https://i.ytimg.com/vi/demo/maxresdefault.jpg", "width": 1920},
+        ],
+    }
+
+    assert select_best_thumbnail_url(meta) == "https://i.ytimg.com/vi/demo/maxresdefault.jpg"
+
+
+def test_select_best_thumbnail_url_falls_back_to_thumbnail_field():
+    meta = {"thumbnail": "https://i.ytimg.com/vi/demo/hqdefault.jpg"}
+
+    assert select_best_thumbnail_url(meta) == "https://i.ytimg.com/vi/demo/hqdefault.jpg"
+
+
+def test_download_thumbnail_writes_file(monkeypatch, tmp_path):
+    calls = {}
+
+    class FakeResponse:
+        def read(self):
+            return b"image-bytes"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(req, timeout=30):
+        calls["url"] = req.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr("src.infra.yt_dlp.urllib.request.urlopen", fake_urlopen)
+
+    out = download_thumbnail("https://i.ytimg.com/vi/demo/maxresdefault.jpg", tmp_path / "demo.jpg")
+
+    assert out.read_bytes() == b"image-bytes"
+    assert calls["url"] == "https://i.ytimg.com/vi/demo/maxresdefault.jpg"
+
+
+def test_download_thumbnail_from_metadata_uses_video_id_and_extension(tmp_path, monkeypatch):
+    def fake_download(url, output_path, logger=None):
+        path = Path(output_path)
+        path.write_bytes(b"cover")
+        return path
+
+    monkeypatch.setattr("src.infra.yt_dlp.download_thumbnail", fake_download)
+
+    meta = {"thumbnail": "https://i.ytimg.com/vi/demo123/maxresdefault.jpg"}
+    out = download_thumbnail_from_metadata(meta, tmp_path, video_id="demo123")
+
+    assert out == tmp_path / "demo123.jpg"
+    assert out.read_bytes() == b"cover"
+
+
+def test_build_video_format_selector_prefers_english_original():
+    expr = build_video_format_selector(non_hls=True)
+    parts = expr.split("/")
+
+    assert parts[0].endswith("+ba[language^=en][format_note*=original][protocol!*=m3u8]")
+    assert parts[1].endswith("+ba[language^=en][protocol!*=m3u8]")
+    assert parts[2].endswith("+ba[protocol!*=m3u8]")
+
+
+def test_build_video_format_selector_hls_fallback():
+    expr = build_video_format_selector(non_hls=False)
+
+    assert expr.startswith("bv*+ba[language^=en][format_note*=original]/")
+    assert expr.endswith("bv*+ba/b")

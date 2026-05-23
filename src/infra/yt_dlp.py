@@ -5,6 +5,8 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.parse
+import urllib.request
 from http.cookiejar import Cookie
 from pathlib import Path
 
@@ -426,6 +428,10 @@ def _ensure_merged_mp4(output_path: str | Path, *, logger=None) -> Path:
         str(video_path),
         "-i",
         str(audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
         "-c",
         "copy",
         str(out),
@@ -436,6 +442,22 @@ def _ensure_merged_mp4(output_path: str | Path, *, logger=None) -> Path:
     if not out.exists() or out.stat().st_size == 0:
         raise RuntimeError(f"音视频合并失败: {out}")
     return out
+
+
+def build_video_format_selector(*, non_hls: bool = True) -> str:
+    if non_hls:
+        no_hls = "[protocol!*=m3u8]"
+        video = f"bv*{no_hls}"
+        en_original = f"ba[language^=en][format_note*=original]{no_hls}"
+        en_audio = f"ba[language^=en]{no_hls}"
+        any_audio = f"ba{no_hls}"
+        muxed = f"b{no_hls}"
+        return f"{video}+{en_original}/{video}+{en_audio}/{video}+{any_audio}/{muxed}"
+    return (
+        "bv*+ba[language^=en][format_note*=original]/"
+        "bv*+ba[language^=en]/"
+        "bv*+ba/b"
+    )
 
 
 def download_video(
@@ -475,12 +497,14 @@ def download_video(
     non_hls_cmd = [
         *common_args[:-1],
         "-f",
-        "bv*[protocol!*=m3u8]+ba[protocol!*=m3u8]/b[protocol!*=m3u8]",
+        build_video_format_selector(non_hls=True),
         common_args[-1],
     ]
     try:
         if logger:
-            logger.info("[yt-dlp] 下载策略: 优先非 HLS(m3u8)，按分辨率/帧率/码率选择最高质量")
+            logger.info(
+                "[yt-dlp] 下载策略: 优先非 HLS(m3u8)，英语原声，按分辨率/帧率/码率选择最高质量"
+            )
         _run_yt_dlp_stream(non_hls_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=6)
         _ensure_merged_mp4(output_path, logger=logger)
         return
@@ -500,13 +524,64 @@ def download_video(
     fallback_cmd = [
         *common_args[:-1],
         "-f",
-        "bv*+ba/b",
+        build_video_format_selector(non_hls=False),
         "--concurrent-fragments",
         "1",
         common_args[-1],
     ]
     _run_yt_dlp_stream(fallback_cmd, action="下载视频", logger=logger, hls_403_fast_fail_threshold=8)
     _ensure_merged_mp4(output_path, logger=logger)
+
+
+def select_best_thumbnail_url(meta: dict) -> str | None:
+    thumbnails = meta.get("thumbnails") or []
+    if isinstance(thumbnails, list) and thumbnails:
+        best = max(thumbnails, key=lambda item: int(item.get("width") or 0))
+        url = str(best.get("url") or "").strip()
+        if url:
+            return url
+    url = str(meta.get("thumbnail") or "").strip()
+    return url or None
+
+
+def _thumbnail_extension(url: str) -> str:
+    suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+        return suffix
+    return ".jpg"
+
+
+def download_thumbnail(url: str, output_path: str | Path, *, logger=None) -> Path:
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    if logger:
+        logger.info(f"[thumbnail] 下载封面: {url}")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = resp.read()
+    if not data:
+        raise RuntimeError(f"缩略图下载为空: {url}")
+    out.write_bytes(data)
+    return out
+
+
+def download_thumbnail_from_metadata(
+    meta: dict,
+    output_dir: str | Path,
+    *,
+    video_id: str,
+    logger=None,
+) -> Path:
+    url = select_best_thumbnail_url(meta)
+    if not url:
+        raise RuntimeError("视频元数据未包含可用封面 URL")
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return download_thumbnail(
+        url,
+        out_dir / f"{video_id}{_thumbnail_extension(url)}",
+        logger=logger,
+    )
 
 
 def download_subtitle(
