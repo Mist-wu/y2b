@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+
+
+_FILLER_WORDS = {"um", "uh", "er", "erm", "hmm", "mm", "mmm", "yeah", "yep", "yup", "oh", "ah"}
+_EDGE_FILLER_WORDS = {"um", "uh", "er", "erm", "hmm", "mm", "mmm", "yeah", "yep", "yup"}
 
 
 @dataclass
@@ -107,8 +112,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             start = self._ass_time(cue.start)
             end = self._ass_time(cue.end)
-            cn_wrapped = self._wrap_text(cue.translation or cue.text, max_chars=max(14, round(width / 54)))
-            en_wrapped = self._wrap_text(cue.text, max_chars=max(36, round(width / 32)))
+            cn_wrapped = self._wrap_text(cue.translation or cue.text, max_chars=max(48, round(width / 40)))
+            en_wrapped = self._wrap_text(cue.text, max_chars=max(56, round(width / 30)))
             if "\n" in cn_wrapped:
                 cn_style = "CN"
             elif "\n" in en_wrapped:
@@ -183,6 +188,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         segmented = self._close_short_gaps(segmented)
         segmented = self._trim_unusually_long_cues(segmented)
         segmented = self._merge_orphan_short_cues(segmented)
+        segmented = self._clean_filler_cues(segmented)
+        segmented = self._close_short_gaps(segmented)
         if self.logger:
             self.logger.info(f"DeepSeek 智能分句完成: {len(cues)} -> {len(segmented)} 条")
         return segmented
@@ -213,7 +220,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if start != expected_start or end < start or end > last_index:
                 raise RuntimeError(f"分句索引不连续: expected_start={expected_start}, item={item}")
             group = cues[start : end + 1]
-            text = self._dedupe_repeated_words(" ".join(cue.text for cue in group).strip())
+            text = self._clean_caption_text(" ".join(cue.text for cue in group).strip())
             duration = group[-1].end - group[0].start
             if len(text.split()) > 24 or duration > 8.0:
                 result.extend(self._merge_sentence_fragments(group))
@@ -245,7 +252,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     or self._starts_with_continuation_word(cues[i + 1].text)
                 ):
                     nxt = cues[i + 1]
-                    merged_text = self._dedupe_repeated_words(f"{current.text} {nxt.text}".strip())
+                    merged_text = self._clean_caption_text(f"{current.text} {nxt.text}".strip())
                     merged_duration = nxt.end - current.start
                     if len(merged_text.split()) <= 36 and merged_duration <= 10.0:
                         merged = SubtitleCue(
@@ -305,7 +312,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
             if should_merge:
                 current.end = max(current.end, cue.end)
-                current.text = self._dedupe_repeated_words(combined_text)
+                current.text = self._clean_caption_text(combined_text)
                 continue
             merged.append(current)
             current = SubtitleCue(start=cue.start, end=cue.end, text=cue.text)
@@ -352,7 +359,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             prev = merged[-1]
             gap = cue.start - prev.end
             cue_words = re.findall(r"[A-Za-z0-9']+", cue.text)
-            combined_text = self._dedupe_repeated_words(f"{prev.text} {cue.text}".strip())
+            combined_text = self._clean_caption_text(f"{prev.text} {cue.text}".strip())
             combined_duration = cue.end - prev.start
             should_attach_to_prev = (
                 0 <= gap <= 0.35
@@ -425,15 +432,96 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return max(1.2, len(words) * 0.55 + 1.0, compact_chars * 0.04 + 0.8)
         return max(1.2, compact_chars * 0.12 + 0.8)
 
+    def _clean_caption_text(self, text: str) -> str:
+        text = self._dedupe_repeated_words(text)
+        text = self._strip_edge_fillers(text)
+        text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+        return re.sub(r"\s+", " ", text).strip()
+
     def _dedupe_repeated_words(self, text: str) -> str:
+        """Collapse adjacent duplicated word groups caused by rolling auto captions.
+
+        Keep the cleanup conservative: programming/quant/game videos often repeat key
+        terms on purpose, so we only remove immediately repeated phrases. Single-word
+        repeats are only collapsed for obvious filler words such as "yeah yeah".
+        """
         words = text.split()
-        if len(words) < 6:
+        if len(words) < 2:
             return text
-        lower = [w.lower() for w in words]
-        max_n = min(len(words) // 2, 12)
-        for n in range(max_n, 2, -1):
-            if lower[:n] == lower[n : 2 * n]:
-                return " ".join([*words[:n], *words[2 * n :]]).strip()
+
+        result = words[:]
+        changed = True
+        while changed:
+            changed = False
+            keys = [self._dedupe_key(word) for word in result]
+            i = 0
+            while i < len(result):
+                max_n = min((len(result) - i) // 2, 12)
+                removed = False
+                for n in range(max_n, 0, -1):
+                    left = keys[i : i + n]
+                    right = keys[i + n : i + 2 * n]
+                    if left != right or not any(left):
+                        continue
+                    if n == 1 and left[0] not in _FILLER_WORDS:
+                        continue
+                    del result[i + n : i + 2 * n]
+                    changed = True
+                    removed = True
+                    break
+                if removed:
+                    break
+                i += 1
+        return " ".join(result).strip()
+
+    def _dedupe_key(self, word: str) -> str:
+        return re.sub(r"^[^\w']+|[^\w']+$", "", word.lower())
+
+    def _clean_filler_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
+        if not cues:
+            return []
+
+        cleaned: list[SubtitleCue] = []
+        dropped = 0
+        for cue in cues:
+            if self._is_filler_only_cue(cue):
+                if cleaned and 0 <= cue.start - cleaned[-1].end <= 0.6:
+                    cleaned[-1].end = max(cleaned[-1].end, cue.end)
+                dropped += 1
+                continue
+
+            text = self._clean_caption_text(cue.text)
+            if not text:
+                dropped += 1
+                continue
+            cleaned.append(SubtitleCue(cue.start, cue.end, text, cue.translation))
+
+        if self.logger and dropped:
+            self.logger.info(f"已清理无意义语气词字幕: {dropped} 条")
+        return cleaned
+
+    def _is_filler_only_cue(self, cue: SubtitleCue) -> bool:
+        words = re.findall(r"[A-Za-z']+", cue.text.lower())
+        if not words or len(words) > 3:
+            return False
+        duration = cue.end - cue.start
+        return duration <= 1.5 and all(word in _FILLER_WORDS for word in words)
+
+    def _strip_edge_fillers(self, text: str) -> str:
+        text = (text or "").strip()
+        if not text:
+            return text
+        pattern = "|".join(sorted(map(re.escape, _EDGE_FILLER_WORDS), key=len, reverse=True))
+        while True:
+            stripped = re.sub(rf"^(?:{pattern})(?:[,.!?:;\-–—]+|\s+)+", "", text, flags=re.IGNORECASE).strip()
+            if stripped == text or not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", stripped):
+                break
+            text = stripped
+        while True:
+            stripped = re.sub(rf"(?:\s+|[,.!?:;\-–—]+)(?:{pattern})$", "", text, flags=re.IGNORECASE).strip()
+            if stripped == text or not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", stripped):
+                break
+            text = stripped
         return text
 
     def _split_timed_vtt_cue(self, start: float, end: float, raw_text: str) -> list[SubtitleCue]:
@@ -600,20 +688,44 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     def _wrap_text(self, text: str, *, max_chars: int) -> str:
         text = (text or "").strip()
-        if len(text) <= max_chars:
+        if self._display_width(text) <= max_chars:
             return text
         chunks: list[str] = []
         current = ""
         for token in re.split(r"(\s+)", text):
             if not token:
                 continue
-            if len(current) + len(token) > max_chars and current:
+            candidate = current + token
+            if current and self._display_width(candidate) > max_chars:
                 chunks.append(current.strip())
                 current = token.strip()
             else:
-                current += token
+                current = candidate
         if current.strip():
             chunks.append(current.strip())
-        if len(chunks) <= 1:
-            chunks = [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
+        if len(chunks) <= 1 or any(self._display_width(chunk) > max_chars for chunk in chunks):
+            chunks = self._split_by_display_width(text, max_chars)
         return "\n".join(chunks[:2])
+
+    def _split_by_display_width(self, text: str, max_width: int) -> list[str]:
+        chunks: list[str] = []
+        current = ""
+        width = 0
+        for char in text:
+            char_width = self._display_width(char)
+            if current and width + char_width > max_width:
+                chunks.append(current.strip())
+                current = char
+                width = char_width
+            else:
+                current += char
+                width += char_width
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks
+
+    def _display_width(self, text: str) -> int:
+        width = 0
+        for char in text:
+            width += 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+        return width

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.config.config import load_config
-from src.infra.ai_client import _parse_json_value
+from src.infra.ai_client import _parse_json_value, build_subtitle_translation_prompt
 from src.service.subtitle import SubtitleCue, SubtitleService
 
 
@@ -142,14 +142,52 @@ def test_dedupe_repeated_words():
     assert deduped == "welcome to finance today"
 
 
+def test_dedupe_repeated_words_inside_sentence():
+    svc = service()
+    text = "first we load the CSV load the CSV and then call tail"
+    deduped = svc._dedupe_repeated_words(text)
+    assert deduped == "first we load the CSV and then call tail"
+
+
+def test_clean_filler_cues_drops_standalone_fillers_and_strips_edges():
+    svc = service()
+    cues = [
+        SubtitleCue(0.0, 0.6, "um"),
+        SubtitleCue(0.6, 2.0, "yeah we import pandas"),
+        SubtitleCue(2.1, 2.7, "uh"),
+    ]
+
+    cleaned = svc._clean_filler_cues(cues)
+
+    assert len(cleaned) == 1
+    assert cleaned[0].text == "we import pandas"
+    assert cleaned[0].end == 2.7
+
+
+def test_subtitle_translation_prompt_targets_teaching_and_game_content():
+    prompt = build_subtitle_translation_prompt(load_config().translation)
+
+    assert "编程教程、量化金融教学、荒野乱斗/游戏解说" in prompt
+    assert "不要翻成纪录片腔" in prompt
+    assert "函数名、API" in prompt
+
+
 def test_wrap_text():
     svc = service()
     text = "This is a very long text"
     wrapped = svc._wrap_text(text, max_chars=10)
     # Re-splits by space.
-    # Chunk 1: "This is a" (len 9)
-    # Chunk 2: "very long" (len 9)
+    # Chunk 1: "This is a" (display width 9)
+    # Chunk 2: "very long" (display width 9)
     # Remaining: "text"
     # Result should be wrapped text with \n, truncated to at most 2 lines.
     assert wrapped == "This is a\nvery long"
+
+
+def test_wrap_text_counts_chinese_as_double_width():
+    svc = service()
+    text = "中文教学字幕需要更自然地换行"
+    wrapped = svc._wrap_text(text, max_chars=12)
+
+    assert wrapped == "中文教学字幕\n需要更自然地"
 
