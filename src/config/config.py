@@ -58,7 +58,7 @@ class SubtitleStyleConfig(StrictModel):
     font_en: str = "Inter SemiBold"
     fonts_dir: str | None = "./fonts"
     cn_font_ratio: float = Field(default=0.052, gt=0)
-    en_font_ratio: float = Field(default=0.026, gt=0)
+    en_font_ratio: float = Field(default=0.030, gt=0)
     cn_margin_ratio: float = Field(default=0.075, gt=0)
     cn_single_line_margin_ratio: float = Field(default=0.068, gt=0)
     cn_single_line_wrapped_en_margin_ratio: float = Field(default=0.094, gt=0)

@@ -53,7 +53,39 @@ def test_repair_continuation_boundaries_merges_bad_endings():
     repaired = svc._repair_continuation_boundaries(cues)
 
     assert len(repaired) == 1
-    assert repaired[0].text == "we can import data with the read CSV function"
+    assert repaired[0].text == "we can import data with the read_csv function"
+
+
+def test_repair_continuation_boundaries_merges_speech_continuations():
+    svc = service()
+    cues = [
+        SubtitleCue(45.90, 51.54, "let's download monthly stock prices for the ETF spy adjusted close gives"),
+        SubtitleCue(51.54, 54.18, "us closing prices that are inclusive of cash flows so"),
+        SubtitleCue(54.18, 57.00, "we aren't leaving any data out this way returns"),
+        SubtitleCue(57.00, 61.08, "will be calculated as total returns as opposed to price returns"),
+    ]
+
+    repaired = svc._repair_continuation_boundaries(cues)
+
+    assert [cue.text for cue in repaired] == [
+        "let's download monthly stock prices for the ETF spy adjusted close gives us closing prices that are inclusive of cash flows so",
+        "we aren't leaving any data out this way returns will be calculated as total returns as opposed to price returns",
+    ]
+
+
+def test_repair_continuation_boundaries_does_not_overmerge_common_so():
+    svc = service()
+    cues = [
+        SubtitleCue(0.0, 2.0, "I think so"),
+        SubtitleCue(2.0, 4.0, "we should continue with the next example"),
+    ]
+
+    repaired = svc._repair_continuation_boundaries(cues)
+
+    assert [cue.text for cue in repaired] == [
+        "I think so",
+        "we should continue with the next example",
+    ]
 
 
 def test_ass_time_and_escape():
@@ -161,6 +193,15 @@ def test_dedupe_repeated_words_inside_sentence():
     assert deduped == "first we load the CSV and then call tail"
 
 
+def test_normalize_asr_terms_is_curated_and_non_destructive():
+    svc = service()
+    text = "we use y Finance then call Dot Plot and drop n a with the two period method"
+
+    normalized = svc._clean_caption_text(text)
+
+    assert normalized == "we use yfinance then call plot() and dropna with the to_period method"
+
+
 def test_clean_filler_cues_drops_standalone_fillers_and_strips_edges():
     svc = service()
     cues = [
@@ -222,19 +263,19 @@ def test_wrap_text_does_not_split_english_words_or_truncate():
 def test_subtitle_max_display_width_is_wider_for_2k_video():
     svc = service()
 
-    assert svc._subtitle_max_display_width(2560, 75, language="cjk") == 59
-    assert svc._subtitle_max_display_width(2560, 37, language="latin") == 104
+    assert svc._subtitle_max_display_width(2560, 75, language="cjk") == 64
+    assert svc._subtitle_max_display_width(2560, 43, language="latin") == 102
 
 
 def test_bilingual_cn_margin_tracks_actual_english_line_count():
     svc = service()
 
-    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=1) == 98
-    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=2) == 135
-    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=3) == 171
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=43, en_line_count=1) == 99
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=43, en_line_count=2) == 144
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=43, en_line_count=3) == 189
 
 
-def test_write_bilingual_ass_uses_per_cue_cn_margin(tmp_path: Path):
+def test_write_bilingual_ass_keeps_chinese_single_line(tmp_path: Path):
     svc = service()
     output = tmp_path / "sample.ass"
     long_en = " ".join(["long"] * 30)
@@ -249,9 +290,29 @@ def test_write_bilingual_ass_uses_per_cue_cn_margin(tmp_path: Path):
     ]
 
     svc.write_bilingual_ass(cues, output, width=2560, height=1440)
-    dialogue_lines = [line for line in output.read_text(encoding="utf-8").splitlines() if line.startswith("Dialogue: 1")]
+    text = output.read_text(encoding="utf-8")
+    cn_dialogue_lines = [line for line in text.splitlines() if line.startswith("Dialogue: 1")]
 
-    assert ",CN,,0,0,98,," in dialogue_lines[0]
-    assert r"\N" in dialogue_lines[0]
-    assert ",CN,,0,0,135,," in dialogue_lines[1]
+    assert len(cn_dialogue_lines) == 3
+    assert all(r"\N" not in line for line in cn_dialogue_lines)
+    assert all(r"{\q2}" in line for line in cn_dialogue_lines)
+    assert ",CN,,0,0,99,," in cn_dialogue_lines[0]
+    assert ",CN,,0,0,144,," in cn_dialogue_lines[-1]
 
+
+def test_split_cue_for_single_line_cn_splits_translation_and_timing():
+    svc = service()
+    cue = SubtitleCue(
+        0.0,
+        4.0,
+        "this sentence should be split into parallel chunks for display",
+        "这是一条特别长的中文字幕，需要被拆成多条连续字幕来保证始终单行显示",
+    )
+
+    split = svc._split_cue_for_single_line_cn(cue, max_chars=28)
+
+    assert len(split) > 1
+    assert split[0].start == 0.0
+    assert split[-1].end == 4.0
+    assert all("\n" not in item.translation for item in split if item.translation)
+    assert all(svc._display_width(item.translation or "") <= 28 for item in split)

@@ -33,7 +33,7 @@ subtitle_style:
   font_en: Inter SemiBold
   fonts_dir: ./fonts
   cn_font_ratio: 0.052
-  en_font_ratio: 0.026
+  en_font_ratio: 0.030
   cn_margin_ratio: 0.075
   cn_single_line_margin_ratio: 0.068
   cn_single_line_wrapped_en_margin_ratio: 0.094

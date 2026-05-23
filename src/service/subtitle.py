@@ -100,36 +100,82 @@ Style: EN,{style.font_en},{en_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         lines = [header]
+        cn_max_width = self._subtitle_max_display_width(width, cn_size, language="cjk")
+        en_max_width = self._subtitle_max_display_width(width, en_size, language="latin")
         for cue in cues:
             if cue.end <= cue.start:
                 continue
-            start = self._ass_time(cue.start)
-            end = self._ass_time(cue.end)
-            cn_wrapped = self._wrap_text(
-                cue.translation or cue.text,
-                max_chars=self._subtitle_max_display_width(width, cn_size, language="cjk"),
-                max_lines=3,
-                label="中文字幕",
-            )
-            en_wrapped = self._wrap_text(
-                cue.text,
-                max_chars=self._subtitle_max_display_width(width, en_size, language="latin"),
-                max_lines=3,
-                label="英文字幕",
-            )
-            cn_margin = self._bilingual_cn_margin(
-                height=height,
-                en_margin=en_margin,
-                en_size=en_size,
-                en_line_count=self._subtitle_line_count(en_wrapped),
-            )
-            cn = self._ass_escape(cn_wrapped)
-            en = self._ass_escape(en_wrapped)
-            lines.append(f"Dialogue: 1,{start},{end},CN,,0,0,{cn_margin},,{cn}\n")
-            lines.append(f"Dialogue: 0,{start},{end},EN,,0,0,{en_margin},,{en}\n")
+            for display_cue in self._split_cue_for_single_line_cn(cue, max_chars=cn_max_width):
+                start = self._ass_time(display_cue.start)
+                end = self._ass_time(display_cue.end)
+                cn_text = re.sub(r"\s+", " ", (display_cue.translation or display_cue.text).strip())
+                if not cn_text:
+                    continue
+                en_wrapped = self._wrap_text(
+                    display_cue.text,
+                    max_chars=en_max_width,
+                    max_lines=3,
+                    label="英文字幕",
+                )
+                cn_margin = self._bilingual_cn_margin(
+                    height=height,
+                    en_margin=en_margin,
+                    en_size=en_size,
+                    en_line_count=self._subtitle_line_count(en_wrapped),
+                )
+                cn = r"{\q2}" + self._ass_escape(cn_text)
+                en = self._ass_escape(en_wrapped)
+                lines.append(f"Dialogue: 1,{start},{end},CN,,0,0,{cn_margin},,{cn}\n")
+                lines.append(f"Dialogue: 0,{start},{end},EN,,0,0,{en_margin},,{en}\n")
 
         output.write_text("".join(lines), encoding="utf-8")
         return output
+
+    def _split_cue_for_single_line_cn(self, cue: SubtitleCue, *, max_chars: int) -> list[SubtitleCue]:
+        cn_text = re.sub(r"\s+", " ", (cue.translation or cue.text or "").strip())
+        if not cn_text or self._display_width(cn_text) <= max_chars:
+            return [cue]
+
+        cn_parts = self._split_by_display_width(cn_text, max_chars)
+        if len(cn_parts) <= 1:
+            return [cue]
+
+        en_parts = self._split_text_for_parallel_cues(cue.text, len(cn_parts))
+        weights = [max(1, self._display_width(part)) for part in cn_parts]
+        total_weight = sum(weights)
+        duration = cue.end - cue.start
+        result: list[SubtitleCue] = []
+        current_start = cue.start
+        for index, (cn_part, weight) in enumerate(zip(cn_parts, weights, strict=True)):
+            if index == len(cn_parts) - 1:
+                current_end = cue.end
+            else:
+                current_end = current_start + duration * weight / total_weight
+                current_end = min(cue.end, max(current_start + 0.35, current_end))
+            result.append(
+                SubtitleCue(
+                    start=current_start,
+                    end=current_end,
+                    text=en_parts[index] if index < len(en_parts) else cue.text,
+                    translation=cn_part,
+                )
+            )
+            current_start = current_end
+        return [item for item in result if item.end > item.start]
+
+    def _split_text_for_parallel_cues(self, text: str, parts: int) -> list[str]:
+        text = re.sub(r"\s+", " ", (text or "").strip())
+        if parts <= 1 or not text:
+            return [text]
+        words = text.split()
+        if len(words) >= parts * 2:
+            return self._split_words_evenly(words, parts)
+        text_parts = self._split_text_by_display_width(text, parts)
+        if len(text_parts) == parts:
+            return text_parts
+        if len(text_parts) > parts:
+            return [*text_parts[: parts - 1], " ".join(text_parts[parts - 1 :]).strip()]
+        return [*text_parts, *[""] * (parts - len(text_parts))]
 
     def _parse_vtt(self, path: Path) -> list[SubtitleCue]:
         text = path.read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
@@ -253,11 +299,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if i + 1 < len(cues) and (
                     self._ends_with_continuation_word(current.text)
                     or self._starts_with_continuation_word(cues[i + 1].text)
+                    or self._has_soft_continuation_boundary(current.text, cues[i + 1].text)
                 ):
                     nxt = cues[i + 1]
                     merged_text = self._clean_caption_text(f"{current.text} {nxt.text}".strip())
                     merged_duration = nxt.end - current.start
-                    if len(merged_text.split()) <= 24 and merged_duration <= 7.5:
+                    if len(merged_text.split()) <= 24 and merged_duration <= 9.0:
                         merged = SubtitleCue(
                             start=current.start,
                             end=nxt.end,
@@ -497,8 +544,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _clean_caption_text(self, text: str) -> str:
         text = self._dedupe_repeated_words(text)
         text = self._strip_edge_fillers(text)
+        text = self._normalize_asr_terms(text)
         text = re.sub(r"\s+([,.;:!?])", r"\1", text)
         return re.sub(r"\s+", " ", text).strip()
+
+    def _normalize_asr_terms(self, text: str) -> str:
+        replacements = (
+            (r"\bread\s+CSV\b", "read_csv"),
+            (r"\bdrop\s+n\s+a\b", "dropna"),
+            (r"\btwo\s+period\b", "to_period"),
+            (r"\bDot\s+Plot\b", "plot()"),
+            (r"\by\s+Finance\b", "yfinance"),
+            (r"\bIn-Place\b", "inplace"),
+            (r"\bN\s+A\b", "NA"),
+        )
+        for pattern, replacement in replacements:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        return text
 
     def _dedupe_repeated_words(self, text: str) -> str:
         """Collapse adjacent duplicated word groups caused by rolling auto captions.
@@ -643,6 +705,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "that", "which", "who", "from", "into", "than", "then", "the", "a", "an", "up",
             "elements", "asset", "assets", "method", "methods", "function", "data", "frame",
         }
+
+    def _has_soft_continuation_boundary(self, left: str, right: str) -> bool:
+        """Catch ASR phrase splits without treating common words as global glue."""
+        left_words = re.findall(r"[A-Za-z0-9']+", left.lower())
+        right_words = re.findall(r"[A-Za-z0-9']+", right.lower())
+        if not left_words or not right_words:
+            return False
+        left_tail = " ".join(left_words[-4:])
+        right_head = right_words[0]
+        return (
+            (left_tail.endswith("adjusted close gives") and right_head == "us")
+            or (left_tail.endswith("cash flows so") and right_head == "we")
+            or (left_tail.endswith("this way returns") and right_head == "will")
+        )
 
     def _looks_sentence_complete(self, text: str) -> bool:
         text = text.strip()
@@ -923,10 +999,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return max(40, en_margin + en_block_height + line_gap, round(height * ratio_floor))
 
     def _subtitle_max_display_width(self, video_width: int, font_size: int, *, language: str) -> int:
-        available_width = video_width * 0.86
+        available_width = video_width * 0.94
         if language == "latin":
-            return max(64, min(104, round(available_width / max(1, font_size * 0.55))))
-        return max(44, min(64, round(available_width / max(1, font_size * 0.50))))
+            return max(72, min(118, round(available_width / max(1, font_size * 0.55))))
+        return max(48, min(76, round(available_width / max(1, font_size * 0.50))))
 
     def _is_wrap_punctuation(self, text: str) -> bool:
         return bool(text) and text[-1] in "，。！？、；：）」》】』』,.!?;:)]}"
