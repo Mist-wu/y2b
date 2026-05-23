@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
@@ -72,18 +73,12 @@ class SubtitleService:
         style = self.config.subtitle_style
         cn_size = max(24, round(height * style.cn_font_ratio))
         en_size = max(16, round(height * style.en_font_ratio))
-        cn_margin = max(40, round(height * style.cn_margin_ratio))
         en_margin = max(24, round(height * style.en_margin_ratio))
-        line_gap = max(8, round(height * 0.008))
-        cn_single_line_margin = max(
-            40,
-            en_margin + en_size + line_gap,
-            round(height * style.cn_single_line_margin_ratio),
-        )
-        cn_single_line_wrapped_en_margin = max(
-            cn_single_line_margin,
-            en_margin + en_size * 2 + line_gap,
-            round(height * style.cn_single_line_wrapped_en_margin_ratio),
+        cn_default_margin = self._bilingual_cn_margin(
+            height=height,
+            en_margin=en_margin,
+            en_size=en_size,
+            en_line_count=1,
         )
         cn_outline = max(2, round(height * style.cn_outline_ratio))
         en_outline = max(2, round(height * style.en_outline_ratio))
@@ -98,9 +93,7 @@ PlayResY: {height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CN,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_margin},1
-Style: CN1,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_single_line_margin},1
-Style: CN1E2,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_single_line_wrapped_en_margin},1
+Style: CN,{style.font_cn},{cn_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{cn_outline},0,2,60,60,{cn_default_margin},1
 Style: EN,{style.font_en},{en_size},&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,{en_outline},0,2,60,60,{en_margin},1
 
 [Events]
@@ -112,18 +105,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             start = self._ass_time(cue.start)
             end = self._ass_time(cue.end)
-            cn_wrapped = self._wrap_text(cue.translation or cue.text, max_chars=max(48, round(width / 40)))
-            en_wrapped = self._wrap_text(cue.text, max_chars=max(56, round(width / 30)))
-            if "\n" in cn_wrapped:
-                cn_style = "CN"
-            elif "\n" in en_wrapped:
-                cn_style = "CN1E2"
-            else:
-                cn_style = "CN1"
+            cn_wrapped = self._wrap_text(
+                cue.translation or cue.text,
+                max_chars=self._subtitle_max_display_width(width, cn_size, language="cjk"),
+                max_lines=3,
+                label="中文字幕",
+            )
+            en_wrapped = self._wrap_text(
+                cue.text,
+                max_chars=self._subtitle_max_display_width(width, en_size, language="latin"),
+                max_lines=3,
+                label="英文字幕",
+            )
+            cn_margin = self._bilingual_cn_margin(
+                height=height,
+                en_margin=en_margin,
+                en_size=en_size,
+                en_line_count=self._subtitle_line_count(en_wrapped),
+            )
             cn = self._ass_escape(cn_wrapped)
             en = self._ass_escape(en_wrapped)
-            lines.append(f"Dialogue: 1,{start},{end},{cn_style},,0,0,0,,{cn}\n")
-            lines.append(f"Dialogue: 0,{start},{end},EN,,0,0,0,,{en}\n")
+            lines.append(f"Dialogue: 1,{start},{end},CN,,0,0,{cn_margin},,{cn}\n")
+            lines.append(f"Dialogue: 0,{start},{end},EN,,0,0,{en_margin},,{en}\n")
 
         output.write_text("".join(lines), encoding="utf-8")
         return output
@@ -222,7 +225,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             group = cues[start : end + 1]
             text = self._clean_caption_text(" ".join(cue.text for cue in group).strip())
             duration = group[-1].end - group[0].start
-            if len(text.split()) > 24 or duration > 8.0:
+            if len(text.split()) > 20 or duration > 7.0:
                 result.extend(self._merge_sentence_fragments(group))
             else:
                 result.append(
@@ -254,7 +257,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     nxt = cues[i + 1]
                     merged_text = self._clean_caption_text(f"{current.text} {nxt.text}".strip())
                     merged_duration = nxt.end - current.start
-                    if len(merged_text.split()) <= 36 and merged_duration <= 10.0:
+                    if len(merged_text.split()) <= 24 and merged_duration <= 7.5:
                         merged = SubtitleCue(
                             start=current.start,
                             end=nxt.end,
@@ -280,9 +283,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return []
 
         max_gap = 0.45
-        max_duration = 5.2
-        max_chars = 100
-        max_words = 17
+        max_duration = 4.8
+        max_chars = 80
+        max_words = 15
 
         merged: list[SubtitleCue] = []
         current = SubtitleCue(start=cues[0].start, end=cues[0].end, text=cues[0].text)
@@ -306,9 +309,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     and not next_continuation
                     and (current.end - current.start) >= 1.2
                 )
-                and combined_duration <= (max_duration + 1.4 if relaxed_limit else max_duration)
-                and len(combined_text) <= (max_chars + 40 if relaxed_limit else max_chars)
-                and len(combined_text.split()) <= (max_words + 6 if relaxed_limit else max_words)
+                and combined_duration <= (max_duration + 1.0 if relaxed_limit else max_duration)
+                and len(combined_text) <= (max_chars + 24 if relaxed_limit else max_chars)
+                and len(combined_text.split()) <= (max_words + 3 if relaxed_limit else max_words)
             )
             if should_merge:
                 current.end = max(current.end, cue.end)
@@ -365,8 +368,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 0 <= gap <= 0.35
                 and len(cue_words) <= 2
                 and not self._looks_sentence_complete(prev.text)
-                and len(combined_text.split()) <= 22
-                and combined_duration <= 8.0
+                and len(combined_text.split()) <= 18
+                and combined_duration <= 7.0
             )
             if should_attach_to_prev:
                 prev.end = cue.end
@@ -380,50 +383,109 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return merged
 
     def _trim_unusually_long_cues(self, cues: list[SubtitleCue]) -> list[SubtitleCue]:
-        """Shorten captions that are likely stretched through trailing silence.
+        """Shorten or split captions that are too long for comfortable reading.
 
         YouTube auto captions sometimes leave the last word/short phrase visible until
         the end of the video.  Keep normal long sentences intact, but cap cues whose
-        duration is far longer than their text can reasonably occupy.
+        duration is far longer than their text can reasonably occupy.  After AI/rule
+        segmentation, also split very dense long cues on word boundaries so a single
+        subtitle does not stay on screen for 8-10 seconds.
         """
         if not cues:
             return []
 
         trimmed: list[SubtitleCue] = []
-        changed = 0
+        trim_changed = 0
+        split_changed = 0
         for idx, cue in enumerate(cues):
             duration = cue.end - cue.start
             if duration <= 0:
                 trimmed.append(cue)
                 continue
 
+            candidate = cue
             reasonable_duration = self._reasonable_cue_duration(cue.text)
             trigger_duration = max(6.0, reasonable_duration * 1.8, reasonable_duration + 1.5)
-            if duration <= trigger_duration:
-                trimmed.append(cue)
-                continue
+            if duration > trigger_duration:
+                new_end = cue.start + reasonable_duration
+                if idx + 1 < len(cues) and cues[idx + 1].start > cue.start:
+                    new_end = min(new_end, cues[idx + 1].start)
+                new_end = max(cue.start + 0.35, min(new_end, cue.end))
+                if new_end < cue.end - 0.25:
+                    candidate = SubtitleCue(
+                        start=cue.start,
+                        end=new_end,
+                        text=cue.text,
+                        translation=cue.translation,
+                    )
+                    trim_changed += 1
 
-            new_end = cue.start + reasonable_duration
-            if idx + 1 < len(cues) and cues[idx + 1].start > cue.start:
-                new_end = min(new_end, cues[idx + 1].start)
-            new_end = max(cue.start + 0.35, min(new_end, cue.end))
-            if new_end >= cue.end - 0.25:
-                trimmed.append(cue)
-                continue
+            split = self._split_overlong_cue(candidate)
+            if len(split) > 1:
+                split_changed += 1
+            trimmed.extend(split)
 
-            trimmed.append(
-                SubtitleCue(
-                    start=cue.start,
-                    end=new_end,
-                    text=cue.text,
-                    translation=cue.translation,
-                )
-            )
-            changed += 1
-
-        if self.logger and changed:
-            self.logger.info(f"已修剪异常超长字幕: {changed} 条")
+        if self.logger:
+            if trim_changed:
+                self.logger.info(f"已修剪异常超长字幕: {trim_changed} 条")
+            if split_changed:
+                self.logger.info(f"已拆分过长字幕: {split_changed} 条")
         return trimmed
+
+    def _split_overlong_cue(self, cue: SubtitleCue) -> list[SubtitleCue]:
+        duration = cue.end - cue.start
+        text = cue.text.strip()
+        words = text.split()
+        compact_chars = len(re.sub(r"\s+", "", text))
+        if duration <= 7.0 or (len(words) <= 20 and compact_chars <= 110):
+            return [cue]
+
+        parts = max(
+            2,
+            math.ceil(duration / 5.0),
+            (len(words) + 17) // 18 if words else 1,
+            (compact_chars + 89) // 90,
+        )
+        if words and len(words) >= parts * 3:
+            text_parts = self._split_words_evenly(words, parts)
+        else:
+            text_parts = self._split_text_by_display_width(text, parts)
+        if len(text_parts) <= 1:
+            return [cue]
+
+        part_count = len(text_parts)
+        result: list[SubtitleCue] = []
+        for i, part_text in enumerate(text_parts):
+            start = cue.start + duration * i / part_count
+            end = cue.start + duration * (i + 1) / part_count
+            result.append(SubtitleCue(start=start, end=end, text=part_text, translation=cue.translation))
+        return result
+
+    def _split_words_evenly(self, words: list[str], parts: int) -> list[str]:
+        boundaries: list[int] = []
+        for i in range(1, parts):
+            target = round(len(words) * i / parts)
+            candidates = [
+                idx
+                for idx in range(max(1, target - 4), min(len(words), target + 5))
+                if re.search(r"[,.!?;:。！？；：]$", words[idx - 1])
+            ]
+            boundary = min(candidates, key=lambda idx: abs(idx - target), default=target)
+            boundary = max(boundaries[-1] + 1 if boundaries else 1, min(boundary, len(words) - 1))
+            boundaries.append(boundary)
+
+        result: list[str] = []
+        start = 0
+        for boundary in [*boundaries, len(words)]:
+            part = " ".join(words[start:boundary]).strip()
+            if part:
+                result.append(part)
+            start = boundary
+        return result
+
+    def _split_text_by_display_width(self, text: str, parts: int) -> list[str]:
+        max_width = max(8, (self._display_width(text) + parts - 1) // parts)
+        return self._split_by_display_width(text, max_width)
 
     def _reasonable_cue_duration(self, text: str) -> float:
         words = re.findall(r"[A-Za-z0-9']+", text)
@@ -686,43 +748,191 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _ass_escape(self, text: str) -> str:
         return text.replace("{", "（").replace("}", "）").replace("\n", r"\N")
 
-    def _wrap_text(self, text: str, *, max_chars: int) -> str:
-        text = (text or "").strip()
-        if self._display_width(text) <= max_chars:
+    def _wrap_text(
+        self,
+        text: str,
+        *,
+        max_chars: int,
+        max_lines: int | None = 3,
+        label: str | None = None,
+    ) -> str:
+        text = re.sub(r"\s+", " ", (text or "").strip())
+        if not text or self._display_width(text) <= max_chars:
             return text
+
         chunks: list[str] = []
         current = ""
+        pending_space = False
         for token in re.split(r"(\s+)", text):
             if not token:
                 continue
-            candidate = current + token
-            if current and self._display_width(candidate) > max_chars:
-                chunks.append(current.strip())
-                current = token.strip()
-            else:
-                current = candidate
+            if token.isspace():
+                pending_space = bool(current)
+                continue
+
+            parts = [token]
+            if self._display_width(token) > max_chars:
+                parts = self._split_by_display_width(token, max_chars)
+
+            for part in parts:
+                if not part:
+                    continue
+                separator = " " if pending_space and current else ""
+                candidate = f"{current}{separator}{part}" if current else part
+                if current and self._display_width(candidate) > max_chars:
+                    chunks.append(current.strip())
+                    current = part.strip()
+                else:
+                    current = candidate
+                pending_space = False
+
         if current.strip():
             chunks.append(current.strip())
-        if len(chunks) <= 1 or any(self._display_width(chunk) > max_chars for chunk in chunks):
-            chunks = self._split_by_display_width(text, max_chars)
-        return "\n".join(chunks[:2])
+
+        if max_lines is not None and len(chunks) > max_lines and self.logger:
+            cue_label = label or "字幕"
+            self.logger.warning(
+                f"{cue_label}换行后为 {len(chunks)} 行，超过建议上限 {max_lines} 行；"
+                "已保留完整内容，请考虑进一步拆分该字幕。"
+            )
+        return "\n".join(chunks)
 
     def _split_by_display_width(self, text: str, max_width: int) -> list[str]:
+        text = (text or "").strip()
+        if not text:
+            return []
+        atoms = self._wrap_atoms(text)
+        chunks: list[str] = []
+        start = 0
+        while start < len(atoms):
+            while start < len(atoms) and atoms[start][1] == "space":
+                start += 1
+            if start >= len(atoms):
+                break
+
+            width = 0
+            end = start
+            while end < len(atoms) and width + self._display_width(atoms[end][0]) <= max_width:
+                width += self._display_width(atoms[end][0])
+                end += 1
+
+            if end == len(atoms):
+                chunk = "".join(atom for atom, _ in atoms[start:end]).strip()
+                if chunk:
+                    chunks.append(chunk)
+                break
+
+            if end == start:
+                pieces = self._split_long_atom(atoms[start][0], max_width)
+                chunks.extend(pieces[:-1])
+                atoms[start] = (pieces[-1], atoms[start][1])
+                if len(pieces) == 1:
+                    start += 1
+                continue
+
+            boundary = self._choose_wrap_boundary(atoms, start, end, max_width)
+            chunk = "".join(atom for atom, _ in atoms[start:boundary]).strip()
+            if chunk:
+                chunks.append(chunk)
+            start = boundary
+
+        return chunks
+
+    def _wrap_atoms(self, text: str) -> list[tuple[str, str]]:
+        atoms: list[tuple[str, str]] = []
+        pattern = re.compile(r"[A-Za-z0-9_]+(?:[._'-][A-Za-z0-9_]+)*|\s+|.", re.DOTALL)
+        for match in pattern.finditer(text):
+            token = match.group(0)
+            if token.isspace():
+                atoms.append((" ", "space"))
+            elif re.fullmatch(r"[A-Za-z0-9_]+(?:[._'-][A-Za-z0-9_]+)*", token):
+                atoms.append((token, "word"))
+            elif all(self._is_cjk(char) for char in token):
+                atoms.append((token, "cjk"))
+            else:
+                atoms.append((token, "punct" if self._is_wrap_punctuation(token) else "other"))
+        return atoms
+
+    def _choose_wrap_boundary(
+        self,
+        atoms: list[tuple[str, str]],
+        start: int,
+        end: int,
+        max_width: int,
+    ) -> int:
+        candidates: list[tuple[int, int, int]] = []
+        width = 0
+        for pos in range(start + 1, end + 1):
+            width += self._display_width(atoms[pos - 1][0])
+            priority = self._wrap_boundary_priority(atoms, pos)
+            if priority > 0:
+                candidates.append((priority, width, pos))
+        if not candidates:
+            return end
+
+        preferred = [item for item in candidates if item[1] >= max_width * 0.45]
+        pool = preferred or candidates
+        priority = max(item[0] for item in pool)
+        return max(item[2] for item in pool if item[0] == priority)
+
+    def _wrap_boundary_priority(self, atoms: list[tuple[str, str]], pos: int) -> int:
+        previous_text, previous_kind = atoms[pos - 1]
+        next_kind = atoms[pos][1] if pos < len(atoms) else "end"
+        if previous_kind == "space":
+            return 5
+        if self._is_wrap_punctuation(previous_text):
+            return 6
+        if next_kind == "punct" and atoms[pos][0] not in {'“', '‘', '（', '(', '《', '「'}:
+            return 0
+        if previous_kind in {"word", "cjk"} and next_kind in {"word", "cjk"} and previous_kind != next_kind:
+            return 4
+        if previous_kind == "cjk" and next_kind == "cjk":
+            return 1
+        return 0
+
+    def _split_long_atom(self, text: str, max_width: int) -> list[str]:
         chunks: list[str] = []
         current = ""
         width = 0
         for char in text:
             char_width = self._display_width(char)
             if current and width + char_width > max_width:
-                chunks.append(current.strip())
+                chunks.append(current)
                 current = char
                 width = char_width
             else:
                 current += char
                 width += char_width
-        if current.strip():
-            chunks.append(current.strip())
+        if current:
+            chunks.append(current)
         return chunks
+
+    def _subtitle_line_count(self, text: str) -> int:
+        return max(1, len((text or "").splitlines()))
+
+    def _bilingual_cn_margin(self, *, height: int, en_margin: int, en_size: int, en_line_count: int) -> int:
+        style = self.config.subtitle_style
+        en_lines = max(1, en_line_count)
+        line_gap = max(4, round(height * 0.004))
+        en_block_height = round(en_size * 1.05) * en_lines
+        ratio_floor = (
+            style.cn_single_line_margin_ratio
+            if en_lines == 1
+            else style.cn_single_line_wrapped_en_margin_ratio
+        )
+        return max(40, en_margin + en_block_height + line_gap, round(height * ratio_floor))
+
+    def _subtitle_max_display_width(self, video_width: int, font_size: int, *, language: str) -> int:
+        available_width = video_width * 0.86
+        if language == "latin":
+            return max(64, min(104, round(available_width / max(1, font_size * 0.55))))
+        return max(44, min(64, round(available_width / max(1, font_size * 0.50))))
+
+    def _is_wrap_punctuation(self, text: str) -> bool:
+        return bool(text) and text[-1] in "，。！？、；：）」》】』』,.!?;:)]}"
+
+    def _is_cjk(self, char: str) -> bool:
+        return "\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff"
 
     def _display_width(self, text: str) -> int:
         width = 0

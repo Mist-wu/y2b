@@ -172,16 +172,12 @@ def test_subtitle_translation_prompt_targets_teaching_and_game_content():
     assert "函数名、API" in prompt
 
 
-def test_wrap_text():
+def test_wrap_text_preserves_all_lines():
     svc = service()
     text = "This is a very long text"
     wrapped = svc._wrap_text(text, max_chars=10)
-    # Re-splits by space.
-    # Chunk 1: "This is a" (display width 9)
-    # Chunk 2: "very long" (display width 9)
-    # Remaining: "text"
-    # Result should be wrapped text with \n, truncated to at most 2 lines.
-    assert wrapped == "This is a\nvery long"
+
+    assert wrapped == "This is a\nvery long\ntext"
 
 
 def test_wrap_text_counts_chinese_as_double_width():
@@ -189,5 +185,61 @@ def test_wrap_text_counts_chinese_as_double_width():
     text = "中文教学字幕需要更自然地换行"
     wrapped = svc._wrap_text(text, max_chars=12)
 
-    assert wrapped == "中文教学字幕\n需要更自然地"
+    assert wrapped == "中文教学字幕\n需要更自然地\n换行"
+
+
+def test_wrap_text_does_not_split_latin_words_inside_chinese():
+    svc = service()
+    text = "我们还会导入一个NumPy的封装库Pandas，用来存储数据，以及Matplotlib，用于数据可视化。"
+    wrapped = svc._wrap_text(text, max_chars=34)
+
+    assert "Matplotli\nb" not in wrapped
+    assert "Matplotlib" in wrapped
+    assert wrapped.replace("\n", "") == text
+
+
+def test_wrap_text_does_not_split_english_words_or_truncate():
+    svc = service()
+    text = "If you're interested in finance data science, you're in the right place"
+    wrapped = svc._wrap_text(text, max_chars=24)
+
+    assert "you're" in wrapped
+    assert wrapped.replace("\n", " ") == text
+
+
+def test_subtitle_max_display_width_is_wider_for_2k_video():
+    svc = service()
+
+    assert svc._subtitle_max_display_width(2560, 75, language="cjk") == 59
+    assert svc._subtitle_max_display_width(2560, 37, language="latin") == 104
+
+
+def test_bilingual_cn_margin_tracks_actual_english_line_count():
+    svc = service()
+
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=1) == 98
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=2) == 135
+    assert svc._bilingual_cn_margin(height=1440, en_margin=48, en_size=37, en_line_count=3) == 171
+
+
+def test_write_bilingual_ass_uses_per_cue_cn_margin(tmp_path: Path):
+    svc = service()
+    output = tmp_path / "sample.ass"
+    long_en = " ".join(["long"] * 30)
+    cues = [
+        SubtitleCue(
+            0.0,
+            1.0,
+            "short english",
+            "这是一段会换成两行的中文教学字幕，用来验证中文多行时不会被整体抬得太高",
+        ),
+        SubtitleCue(1.0, 2.0, long_en, "短中文"),
+    ]
+
+    svc.write_bilingual_ass(cues, output, width=2560, height=1440)
+    dialogue_lines = [line for line in output.read_text(encoding="utf-8").splitlines() if line.startswith("Dialogue: 1")]
+
+    assert ",CN,,0,0,98,," in dialogue_lines[0]
+    assert r"\N" in dialogue_lines[0]
+    assert ",CN,,0,0,135,," in dialogue_lines[1]
 
