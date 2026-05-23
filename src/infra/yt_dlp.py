@@ -5,7 +5,10 @@ import re
 import shutil
 import subprocess
 import time
+from http.cookiejar import Cookie
 from pathlib import Path
+
+from yt_dlp.cookies import SUPPORTED_BROWSERS, extract_cookies_from_browser
 
 from src.infra.cli_path import resolve_cli
 from src.infra.ffmpeg import _bin
@@ -13,6 +16,18 @@ from src.infra.ffmpeg import _bin
 YOUTUBE_COOKIES_PATH = str(Path(__file__).parent.parent.parent / "data" / "youtube_cookies.txt")
 HLS_FRAGMENT_403_PATTERN = re.compile(r"HTTP Error 403: Forbidden.*fragment", re.IGNORECASE)
 HLS_FRAGMENT_SKIP_PATTERN = re.compile(r"fragment not found; Skipping fragment", re.IGNORECASE)
+YOUTUBE_AUTH_COOKIE_NAMES = {
+    "LOGIN_INFO",
+    "SID",
+    "HSID",
+    "SSID",
+    "APISID",
+    "SAPISID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+}
 
 
 def _build_auth_args(*, cookies_path: str | None, cookies_from_browser: str | None) -> list[str]:
@@ -132,6 +147,110 @@ def _yt_dlp_bin() -> str:
     if not resolved:
         raise RuntimeError("未找到 yt-dlp 可执行文件，请安装或确认当前虚拟环境可用")
     return resolved
+
+
+def _is_youtube_domain(domain: str) -> bool:
+    normalized = str(domain or "").lstrip(".").lower()
+    return normalized == "youtube.com" or normalized.endswith(".youtube.com")
+
+
+def _cookie_is_valid(item: dict | Cookie, *, now: float) -> bool:
+    if isinstance(item, Cookie):
+        value = str(item.value or "").strip()
+        domain = item.domain
+        expires = item.expires
+    else:
+        value = str(item.get("value") or "").strip()
+        domain = str(item.get("domain") or "")
+        expires = item.get("expires")
+    if not value or not _is_youtube_domain(domain):
+        return False
+    if expires in (None, 0):
+        return True
+    try:
+        return float(expires) > now
+    except (TypeError, ValueError):
+        return True
+
+
+def _cookie_name(item: dict | Cookie) -> str:
+    if isinstance(item, Cookie):
+        return str(item.name or "")
+    return str(item.get("name") or "")
+
+
+def _parse_netscape_cookie_file(path: Path) -> list[dict]:
+    items: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        parts = text.split("\t")
+        if len(parts) < 7:
+            continue
+        domain, _flag, _cookie_path, _secure, expires_raw, name, value = parts[:7]
+        try:
+            expires = int(expires_raw)
+        except ValueError:
+            expires = 0
+        items.append(
+            {
+                "domain": domain,
+                "name": name,
+                "value": value,
+                "expires": expires,
+            }
+        )
+    return items
+
+
+def _summarize_youtube_cookies(cookies: list[dict | Cookie]) -> tuple[bool, str]:
+    now = time.time()
+    valid = [item for item in cookies if _cookie_is_valid(item, now=now)]
+    if not valid:
+        return False, "未找到可用的 youtube.com cookie，请运行 y2b login youtube"
+
+    auth_names = [_cookie_name(item) for item in valid if _cookie_name(item) in YOUTUBE_AUTH_COOKIE_NAMES]
+    if not auth_names:
+        return False, "缺少 YouTube 登录 cookie（如 __Secure-3PSID），请运行 y2b login youtube"
+
+    return True, f"cookies 有效 (youtube cookies={len(valid)})"
+
+
+def validate_youtube_auth(
+    *,
+    cookies_path: str | None = None,
+    cookies_from_browser: str | None = None,
+) -> tuple[bool, str]:
+    if cookies_from_browser:
+        browser = str(cookies_from_browser).strip().lower()
+        if browser not in SUPPORTED_BROWSERS:
+            supported = ", ".join(sorted(SUPPORTED_BROWSERS))
+            return False, f"不支持的浏览器: {browser}（支持: {supported}）"
+        try:
+            cookie_jar = extract_cookies_from_browser(browser, None)
+        except Exception as e:
+            return False, f"无法读取 {browser} cookies: {e}"
+        cookies = list(cookie_jar)
+        ok, message = _summarize_youtube_cookies(cookies)
+        if not ok:
+            return ok, message
+        return True, f"{message} (browser={browser})"
+
+    path = Path(cookies_path or YOUTUBE_COOKIES_PATH)
+    if not path.exists():
+        return False, f"文件不存在: {path}"
+    if path.stat().st_size <= 0:
+        return False, f"文件为空: {path}"
+
+    cookies = _parse_netscape_cookie_file(path)
+    if not cookies:
+        return False, f"未解析到 Netscape cookies: {path}"
+
+    ok, message = _summarize_youtube_cookies(cookies)
+    if not ok:
+        return ok, message
+    return True, f"{message} ({path})"
 
 
 def probe_youtube_video_access(

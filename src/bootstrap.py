@@ -6,10 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.infra.biliup import BILIUP_ARTIFACT_NAMES, _biliup_work_dir, login as biliup_login
+from src.infra.biliup import BILIUP_ARTIFACT_NAMES, _biliup_work_dir, login as biliup_login, validate_bilibili_cookies
 from src.infra.cli_path import cli_exists
 from src.infra.ffmpeg import probe_ffmpeg
-from src.infra.yt_dlp import probe_youtube_video_access
+from src.infra.yt_dlp import probe_youtube_video_access, validate_youtube_auth
 
 
 class CheckResult:
@@ -52,17 +52,17 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
         results.append(CheckResult("ffmpeg probe", False, str(e)))
 
     yt_cfg = config.youtube
-    if yt_cfg.cookies_from_browser:
-        results.append(CheckResult("YouTube auth config", True, f"cookies_from_browser={yt_cfg.cookies_from_browser}"))
-    else:
-        cookie_path = Path(yt_cfg.cookies or "")
-        results.append(
-            CheckResult(
-                "YouTube cookies",
-                cookie_path.exists() and cookie_path.stat().st_size > 0,
-                str(cookie_path),
-            )
+    yt_auth_ok, yt_auth_message = validate_youtube_auth(
+        cookies_path=yt_cfg.cookies,
+        cookies_from_browser=yt_cfg.cookies_from_browser,
+    )
+    results.append(
+        CheckResult(
+            "YouTube auth",
+            yt_auth_ok,
+            yt_auth_message,
         )
+    )
 
     if probe_url:
         try:
@@ -77,11 +77,12 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
             results.append(CheckResult("YouTube probe", False, str(e)))
 
     bili_cookie = Path(config.bilibili_cookies)
+    bili_cookie_ok, bili_cookie_message = validate_bilibili_cookies(bili_cookie)
     results.append(
         CheckResult(
             "Bilibili cookies",
-            bili_cookie.exists() and bili_cookie.stat().st_size > 0,
-            str(bili_cookie),
+            bili_cookie_ok,
+            bili_cookie_message,
         )
     )
 
@@ -136,18 +137,18 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
 
 
 def ensure_youtube_ready(config) -> None:
-    yt_cfg = config.youtube
-    if yt_cfg.cookies_from_browser:
-        return
-    cookie_path = Path(yt_cfg.cookies or "")
-    if not cookie_path.exists() or cookie_path.stat().st_size <= 0:
-        raise RuntimeError("YouTube cookies 不存在，请先运行 y2b login youtube。")
+    ok, message = validate_youtube_auth(
+        cookies_path=config.youtube.cookies,
+        cookies_from_browser=config.youtube.cookies_from_browser,
+    )
+    if not ok:
+        raise RuntimeError(f"YouTube 认证不可用: {message}")
 
 
 def ensure_bilibili_ready(config) -> None:
-    cookie_path = Path(config.bilibili_cookies)
-    if not cookie_path.exists() or cookie_path.stat().st_size <= 0:
-        raise RuntimeError("Bilibili cookies 不存在，请先运行 y2b login bilibili。")
+    ok, message = validate_bilibili_cookies(config.bilibili_cookies)
+    if not ok:
+        raise RuntimeError(f"Bilibili cookies 不可用: {message}")
 
 
 def login_bilibili(config) -> None:

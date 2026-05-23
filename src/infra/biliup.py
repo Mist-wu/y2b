@@ -1,5 +1,7 @@
+import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from src.infra.cli_path import resolve_cli
@@ -7,6 +9,7 @@ from src.infra.cli_path import resolve_cli
 BV_PATTERN = re.compile(r"\bBV[0-9A-Za-z]+\b")
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 BILIUP_ARTIFACT_NAMES = ("ds_update.log", "download.log", "qrcode.png")
+REQUIRED_BILIBILI_COOKIE_NAMES = ("SESSDATA", "bili_jct")
 
 
 def upload(
@@ -73,6 +76,65 @@ def _biliup_work_dir(cookie_path: Path) -> Path:
     work_dir = cookie_path.parent
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir
+
+
+def _extract_bilibili_cookie_items(data: dict) -> dict[str, dict]:
+    raw = data.get("cookie_info", {}).get("cookies") or []
+    items: dict[str, dict] = {}
+    for item in raw:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            if name:
+                items[name] = item
+    return items
+
+
+def validate_bilibili_cookies(cookie_path: str | Path) -> tuple[bool, str]:
+    path = Path(cookie_path)
+    if not path.exists():
+        return False, f"文件不存在: {path}"
+    if path.stat().st_size <= 0:
+        return False, f"文件为空: {path}"
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return False, f"JSON 无效: {path} ({e})"
+    if not isinstance(data, dict):
+        return False, f"cookie 格式无效: {path}"
+
+    cookies = _extract_bilibili_cookie_items(data)
+    if not cookies:
+        return False, f"缺少 cookie_info.cookies: {path}"
+
+    now = time.time()
+    missing: list[str] = []
+    expired: list[str] = []
+    for name in REQUIRED_BILIBILI_COOKIE_NAMES:
+        item = cookies.get(name)
+        if not item or not str(item.get("value") or "").strip():
+            missing.append(name)
+            continue
+        expires = item.get("expires")
+        if expires is not None:
+            try:
+                if float(expires) <= now:
+                    expired.append(name)
+            except (TypeError, ValueError):
+                pass
+
+    if missing:
+        return False, f"缺少必要 cookie ({', '.join(missing)})，请运行 y2b login bilibili"
+    if expired:
+        return False, f"cookie 已过期 ({', '.join(expired)})，请运行 y2b login bilibili"
+
+    mid = data.get("token_info", {}).get("mid")
+    if mid:
+        return True, f"cookies 有效 (uid={mid})"
+    dede_user_id = cookies.get("DedeUserID", {}).get("value")
+    if dede_user_id:
+        return True, f"cookies 有效 (uid={dede_user_id})"
+    return True, "cookies 有效"
 
 
 def login(executable: str, user_cookie_arg: str, user_cookie: str):
