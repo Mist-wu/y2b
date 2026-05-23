@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.config.config import load_config
-from src.infra.ai_client import _parse_json_value, build_subtitle_translation_prompt
+from src.infra.ai_client import _coerce_translation_result, _parse_json_value, build_subtitle_translation_prompt
 from src.service.subtitle import SubtitleCue, SubtitleService
 
 
@@ -65,6 +65,18 @@ def test_ass_time_and_escape():
 
 def test_parse_json_value_tolerates_fenced_json():
     assert _parse_json_value('```json\n{"translations":["你好"]}\n```') == {"translations": ["你好"]}
+
+
+def test_coerce_translation_result_supports_indexed_objects():
+    raw = {"translations": [{"i": 1, "text": "第二条"}, {"i": 0, "text": "第一条"}]}
+
+    assert _coerce_translation_result(raw, expected_count=2) == ["第一条", "第二条"]
+
+
+def test_coerce_translation_result_supports_index_mapping():
+    raw = {"translations": {"0": "第一条", "1": ""}}
+
+    assert _coerce_translation_result(raw, expected_count=2) == ["第一条", ""]
 
 
 def test_parse_srt(tmp_path: Path):

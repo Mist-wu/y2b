@@ -93,7 +93,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
     ) -> list[str]:
         if not lines:
             return []
-        payload = json.dumps({"items": lines}, ensure_ascii=False)
+        payload = json.dumps({"items": [{"i": i, "text": text} for i, text in enumerate(lines)]}, ensure_ascii=False)
         content = self._chat(
             messages=[
                 {"role": "system", "content": self._non_thinking_prompt(system_prompt)},
@@ -104,11 +104,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             json_response=True,
         )
         data = _parse_json_value(content)
-        if isinstance(data, dict):
-            data = data.get("translations") or data.get("items") or data.get("result")
-        if not isinstance(data, list):
-            raise RuntimeError("字幕翻译结果不是 JSON 数组")
-        return [str(x).strip() for x in data]
+        return _coerce_translation_result(data, expected_count=len(lines))
 
     def segment_ranges(
         self,
@@ -286,10 +282,11 @@ def build_subtitle_translation_prompt(translation_cfg, source_lang: str = "en", 
         "1. 保持口语自然、简洁，像中文教学/游戏解说字幕，不要翻成纪录片腔。\n"
         "2. 不要解释，不要添加原文没有的信息；必要时可按中文语序轻微润色，让字幕顺口。\n"
         "3. 保留人名、品牌名、数字、代码、函数名、API、文件名、公式、变量名、版本号、游戏角色/模式/技能名。\n"
-        "4. 忽略无意义填充词，不要单独翻译 um/uh/er/hmm/yeah/yep/oh/ah。\n"
+        "4. 忽略无意义填充词，不要单独翻译 um/uh/er/hmm/yeah/yep/oh/ah；但仍必须为该条返回一个元素，可用空字符串。\n"
         "5. 术语要稳定：编程和量化术语优先准确，游戏术语优先采用中文玩家常用说法。\n"
-        "6. 必须返回 JSON 对象，格式：{\"translations\":[\"译文1\", \"译文2\"]}，数组长度必须与输入 items 完全一致。\n"
-        "7. 每个元素只放对应字幕的中文译文。\n"
+        "6. 输入 items 每项都有 i 和 text。必须返回 JSON 对象，格式：{\"translations\":[{\"i\":0,\"text\":\"译文1\"},{\"i\":1,\"text\":\"译文2\"}]}。\n"
+        "7. translations 必须覆盖每个输入 i，数量与输入 items 完全一致；不要合并、不要拆分、不要省略任何 i。\n"
+        "8. 每个元素只放对应字幕的中文译文。\n"
         f"源语言：{source_lang}，目标语言：{target_lang}。"
         f"{glossary_lines}"
     )
@@ -338,6 +335,44 @@ def _parse_json_value(content: str):
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _coerce_translation_result(data: Any, *, expected_count: int) -> list[str]:
+    if isinstance(data, dict):
+        candidate = data.get("translations") or data.get("items") or data.get("result")
+        data = candidate if candidate is not None else data
+
+    if isinstance(data, dict):
+        result: list[str | None] = [None] * expected_count
+        for key, value in data.items():
+            if not str(key).isdigit():
+                continue
+            idx = int(key)
+            if 0 <= idx < expected_count:
+                result[idx] = str(value).strip()
+        if all(item is not None for item in result):
+            return [item or "" for item in result]
+        raise RuntimeError("字幕翻译结果没有覆盖所有输入索引")
+
+    if not isinstance(data, list):
+        raise RuntimeError("字幕翻译结果不是 JSON 数组")
+
+    if all(isinstance(item, dict) for item in data):
+        result = [None] * expected_count
+        for item in data:
+            idx_value = item.get("i", item.get("index", item.get("id")))
+            if idx_value is None or not str(idx_value).lstrip("+-").isdigit():
+                continue
+            idx = int(idx_value)
+            text = item.get("text", item.get("translation", item.get("zh", item.get("target", ""))))
+            if 0 <= idx < expected_count:
+                result[idx] = str(text).strip()
+        missing = [i for i, item in enumerate(result) if item is None]
+        if missing:
+            raise RuntimeError(f"字幕翻译结果缺少索引: {missing[:8]}")
+        return [item or "" for item in result]
+
+    return [str(item).strip() for item in data]
 
 
 # Backward-compatible functional API.
@@ -390,7 +425,7 @@ def translate_subtitle_lines(
     source_lang: str = "en",
     target_lang: str = "zh-CN",
 ) -> list[str]:
-    payload = json.dumps({"items": lines}, ensure_ascii=False)
+    payload = json.dumps({"items": [{"i": i, "text": text} for i, text in enumerate(lines)]}, ensure_ascii=False)
     parsed = create_llm_client(ai_cfg).translate_batch(
         lines,
         system_prompt=build_subtitle_translation_prompt(translation_cfg, source_lang, target_lang),
