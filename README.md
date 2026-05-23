@@ -144,12 +144,12 @@ y2b logs -f
 src/config/config.yaml
 ```
 
-字幕样式可以在 `subtitle_style` 中调整。默认效果是底部双语字幕：中文大字号粗黑描边，英文小字号黑描边。
+字幕样式可以在 `subtitle_style` 中调整。默认效果是底部双语字幕：中文更醒目、描边更清晰，英文更小用于对照；整体偏教学/游戏解说可读性，不追求纪录片重字幕风格。
 
 项目内置 `fonts/` 字体目录，默认使用：
 
-- 中文：Source Han Sans CN
-- 英文：Inter
+- 中文：Source Han Sans CN Medium
+- 英文：Inter SemiBold
 
 ffmpeg 压制时会通过 `ass` filter 的 `fontsdir` 加载该目录，减少跨平台字体缺失问题。
 

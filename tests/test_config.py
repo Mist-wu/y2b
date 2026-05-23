@@ -26,3 +26,12 @@ def test_default_bilibili_line_omits_invalid_auto():
     cfg = load_config()
 
     assert cfg.bilibili.upload.line is None
+
+
+def test_default_subtitle_style_uses_readable_teaching_game_defaults():
+    cfg = load_config()
+
+    assert cfg.subtitle_style.font_cn == "Source Han Sans CN Medium"
+    assert cfg.subtitle_style.font_en == "Inter SemiBold"
+    assert cfg.subtitle_style.cn_margin_ratio == 0.075
+    assert cfg.subtitle_style.cn_outline_ratio == 0.0048

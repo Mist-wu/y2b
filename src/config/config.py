@@ -54,16 +54,16 @@ class YouTubeConfig(StrictModel):
 
 
 class SubtitleStyleConfig(StrictModel):
-    font_cn: str = "Source Han Sans CN"
-    font_en: str = "Inter"
+    font_cn: str = "Source Han Sans CN Medium"
+    font_en: str = "Inter SemiBold"
     fonts_dir: str | None = "./fonts"
-    cn_font_ratio: float = Field(default=0.050, gt=0)
-    en_font_ratio: float = Field(default=0.028, gt=0)
-    cn_margin_ratio: float = Field(default=0.095, gt=0)
-    cn_single_line_margin_ratio: float = Field(default=0.078, gt=0)
-    cn_single_line_wrapped_en_margin_ratio: float = Field(default=0.105, gt=0)
-    en_margin_ratio: float = Field(default=0.039, gt=0)
-    cn_outline_ratio: float = Field(default=0.0038, ge=0)
+    cn_font_ratio: float = Field(default=0.052, gt=0)
+    en_font_ratio: float = Field(default=0.026, gt=0)
+    cn_margin_ratio: float = Field(default=0.075, gt=0)
+    cn_single_line_margin_ratio: float = Field(default=0.068, gt=0)
+    cn_single_line_wrapped_en_margin_ratio: float = Field(default=0.094, gt=0)
+    en_margin_ratio: float = Field(default=0.033, gt=0)
+    cn_outline_ratio: float = Field(default=0.0048, ge=0)
     en_outline_ratio: float = Field(default=0.0028, ge=0)
 
 

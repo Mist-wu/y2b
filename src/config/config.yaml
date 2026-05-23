@@ -29,16 +29,16 @@ translation:
     Brawl Stars: 荒野乱斗
     Hypercharge: 终极技能
 subtitle_style:
-  font_cn: Source Han Sans CN
-  font_en: Inter
+  font_cn: Source Han Sans CN Medium
+  font_en: Inter SemiBold
   fonts_dir: ./fonts
-  cn_font_ratio: 0.05
-  en_font_ratio: 0.028
-  cn_margin_ratio: 0.095
-  cn_single_line_margin_ratio: 0.078
-  cn_single_line_wrapped_en_margin_ratio: 0.105
-  en_margin_ratio: 0.039
-  cn_outline_ratio: 0.0038
+  cn_font_ratio: 0.052
+  en_font_ratio: 0.026
+  cn_margin_ratio: 0.075
+  cn_single_line_margin_ratio: 0.068
+  cn_single_line_wrapped_en_margin_ratio: 0.094
+  en_margin_ratio: 0.033
+  cn_outline_ratio: 0.0048
   en_outline_ratio: 0.0028
 bilibili:
   cookies: ./data/bilibili_cookies.json
