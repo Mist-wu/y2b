@@ -23,6 +23,8 @@ data/*cookies*.txt
 data/*cookies*.json
 data/bilibili_cookies.json
 data/qrcode.png
+data/ds_update.log
+data/download.log
 
 # Local lists
 list.txt

@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.infra.biliup import login as biliup_login
+from src.infra.biliup import BILIUP_ARTIFACT_NAMES, _biliup_work_dir, login as biliup_login
 from src.infra.cli_path import cli_exists
 from src.infra.ffmpeg import probe_ffmpeg
 from src.infra.yt_dlp import probe_youtube_video_access
@@ -84,6 +84,26 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
             str(bili_cookie),
         )
     )
+
+    biliup_work_dir = _biliup_work_dir(bili_cookie.resolve())
+    stray_artifacts = [name for name in BILIUP_ARTIFACT_NAMES if Path(name).exists()]
+    if stray_artifacts:
+        results.append(
+            CheckResult(
+                "biliup artifacts",
+                False,
+                f"项目根目录存在 biliup 残留 ({', '.join(stray_artifacts)})，请删除；"
+                f"请通过 y2b login bilibili 使用，产物应位于 {biliup_work_dir}",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "biliup work dir",
+                True,
+                f"产物目录 {biliup_work_dir}",
+            )
+        )
 
     api_key = os.getenv(config.ai.api_key_env)
     results.append(
