@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from src.infra.biliup import upload
 
@@ -35,6 +36,7 @@ class UploaderService:
 Url: {video.get('webpage_url') or video.get('url') or ''}
 Uploader: {video.get('channel') or video.get('uploader') or video.get('channel_id') or ''}
 Uploaded: {_format_upload_time(video)}
+翻译压制工具： https://github.com/Mist-wu/y2b
 """
         return upload(
             executable=self.config.bilibili.executable,
