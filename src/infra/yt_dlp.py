@@ -300,6 +300,76 @@ def fetch_video_metadata(
     return json.loads(content.splitlines()[0].strip())
 
 
+_AUDIO_EXTENSIONS = {".m4a", ".opus"}
+_MUXED_EXTENSIONS = {".mp4", ".mkv"}
+_VIDEO_CONTAINER_EXTENSIONS = {".mp4", ".mkv", ".webm"}
+
+
+def _guess_media_kind_by_extension(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in _AUDIO_EXTENSIONS:
+        return "audio"
+    if ext in _MUXED_EXTENSIONS:
+        return "muxed"
+    return "unknown"
+
+
+def _classify_media_file(path: Path) -> str:
+    cmd = [
+        _bin("ffprobe"),
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "json",
+        str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        streams = json.loads(result.stdout or "{}").get("streams") or []
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return _guess_media_kind_by_extension(path)
+    types = {str(item.get("codec_type") or "") for item in streams}
+    has_video = "video" in types
+    has_audio = "audio" in types
+    if has_video and has_audio:
+        return "muxed"
+    if has_video:
+        return "video"
+    if has_audio:
+        return "audio"
+    return _guess_media_kind_by_extension(path)
+
+
+def _assign_unknown_webm_candidates(
+    unknown_webm: list[Path],
+    *,
+    video_candidates: list[Path],
+    audio_candidates: list[Path],
+) -> None:
+    if not unknown_webm:
+        return
+    unknown_webm.sort(key=lambda p: p.stat().st_size, reverse=True)
+    if not video_candidates:
+        video_candidates.append(unknown_webm[0])
+        audio_candidates.extend(unknown_webm[1:])
+        return
+    audio_candidates.extend(unknown_webm)
+
+
+def _collect_download_candidates(parent: Path, stem: str, out: Path) -> list[Path]:
+    patterns = (f"{stem}*.mp4", f"{stem}*.webm", f"{stem}*.mkv", f"{stem}*.m4a", f"{stem}*.opus")
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        for path in parent.glob(pattern):
+            if path.is_file() and path.stat().st_size > 0 and path != out and path not in seen:
+                seen.add(path)
+                candidates.append(path)
+    return candidates
+
+
 def _ensure_merged_mp4(output_path: str | Path, *, logger=None) -> Path:
     out = Path(output_path)
     if out.exists() and out.stat().st_size > 0:
@@ -307,24 +377,36 @@ def _ensure_merged_mp4(output_path: str | Path, *, logger=None) -> Path:
 
     parent = out.parent
     stem = out.stem
-    video_candidates = sorted(
-        [
-            p
-            for p in parent.glob(f"{stem}*.mp4")
-            if p.is_file() and p.stat().st_size > 0 and p != out
-        ],
-        key=lambda p: p.stat().st_size,
-        reverse=True,
+    muxed_candidates: list[Path] = []
+    video_candidates: list[Path] = []
+    audio_candidates: list[Path] = []
+    unknown_webm: list[Path] = []
+    for path in _collect_download_candidates(parent, stem, out):
+        kind = _classify_media_file(path)
+        if kind == "muxed":
+            muxed_candidates.append(path)
+        elif kind == "video":
+            video_candidates.append(path)
+        elif kind == "audio":
+            audio_candidates.append(path)
+        elif path.suffix.lower() == ".webm":
+            unknown_webm.append(path)
+
+    _assign_unknown_webm_candidates(
+        unknown_webm,
+        video_candidates=video_candidates,
+        audio_candidates=audio_candidates,
     )
-    audio_candidates = sorted(
-        [
-            p
-            for p in (*parent.glob(f"{stem}*.webm"), *parent.glob(f"{stem}*.m4a"), *parent.glob(f"{stem}*.opus"))
-            if p.is_file() and p.stat().st_size > 0
-        ],
-        key=lambda p: p.stat().st_size,
-        reverse=True,
-    )
+
+    if muxed_candidates:
+        muxed_path = max(muxed_candidates, key=lambda p: p.stat().st_size)
+        if logger:
+            logger.info(f"[yt-dlp] 使用已合并视频: {muxed_path.name}")
+        muxed_path.replace(out)
+        return out
+
+    video_candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
+    audio_candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
     if not video_candidates:
         raise RuntimeError(f"yt-dlp 下载完成但未找到视频文件: {out}")
 
