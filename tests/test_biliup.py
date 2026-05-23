@@ -58,3 +58,28 @@ def test_upload_runs_biliup_from_cookie_parent_with_absolute_paths(tmp_path, mon
     assert calls["kwargs"]["cwd"] == cookie_path.parent
     assert calls["cmd"][2] == str(cookie_path.resolve())
     assert calls["cmd"][4] == str(video_path.resolve())
+
+
+def test_login_runs_biliup_from_cookie_parent(tmp_path, monkeypatch):
+    from src.infra import biliup
+
+    cookie_path = tmp_path / "data" / "bilibili_cookies.json"
+    cookie_path.parent.mkdir()
+    cookie_path.write_text("{}", encoding="utf-8")
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+
+    monkeypatch.setattr(biliup, "resolve_cli", lambda executable: executable)
+    monkeypatch.setattr(biliup.subprocess, "run", fake_run)
+
+    biliup.login(
+        executable="biliup",
+        user_cookie_arg="-u",
+        user_cookie=str(cookie_path),
+    )
+
+    assert calls["kwargs"]["cwd"] == cookie_path.parent
+    assert calls["cmd"][2] == str(cookie_path.resolve())

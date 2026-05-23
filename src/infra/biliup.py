@@ -6,6 +6,7 @@ from src.infra.cli_path import resolve_cli
 
 BV_PATTERN = re.compile(r"\bBV[0-9A-Za-z]+\b")
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+BILIUP_ARTIFACT_NAMES = ("ds_update.log", "download.log", "qrcode.png")
 
 
 def upload(
