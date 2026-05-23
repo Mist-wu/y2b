@@ -21,7 +21,16 @@ class UploaderService:
     def __init__(self, config):
         self.config = config
 
-    def upload(self, video_path, title, video, *, tags: list[str] | None = None, tid: int | None = None):
+    def upload(
+        self,
+        video_path,
+        title,
+        video,
+        *,
+        tags: list[str] | None = None,
+        tid: int | None = None,
+        cover_path: str | Path | None = None,
+    ):
         desc = f"""Title: {video.get('title') or ''}
 Url: {video.get('webpage_url') or video.get('url') or ''}
 Uploader: {video.get('channel') or video.get('uploader') or video.get('channel_id') or ''}
@@ -38,4 +47,5 @@ Uploaded: {_format_upload_time(video)}
             user_cookie=self.config.bilibili_cookies,
             upload_cfg=self.config.bilibili_upload,
             extra_args=self.config.bilibili.extra_args,
+            cover_path=str(cover_path) if cover_path else None,
         )

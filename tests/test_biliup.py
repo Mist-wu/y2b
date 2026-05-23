@@ -80,6 +80,54 @@ def test_upload_runs_biliup_from_cookie_parent_with_absolute_paths(tmp_path, mon
     assert calls["cmd"][4] == str(video_path.resolve())
 
 
+def test_upload_passes_cover_when_provided(tmp_path, monkeypatch):
+    from src.infra import biliup
+
+    cookie_path = tmp_path / "data" / "bilibili_cookies.json"
+    video_path = tmp_path / "output" / "video.mp4"
+    cover_path = tmp_path / "downloads" / "video.jpg"
+    cookie_path.parent.mkdir()
+    video_path.parent.mkdir()
+    cover_path.parent.mkdir()
+    cookie_path.write_text("{}", encoding="utf-8")
+    video_path.write_text("video", encoding="utf-8")
+    cover_path.write_bytes(b"cover")
+    calls = {}
+
+    class UploadConfig:
+        copyright = None
+        source = None
+        line = None
+
+    class Result:
+        stdout = "BV12YL46bEN7"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(biliup, "resolve_cli", lambda executable: executable)
+    monkeypatch.setattr(biliup.subprocess, "run", fake_run)
+
+    biliup.upload(
+        executable="biliup",
+        user_cookie_arg="-u",
+        video_path=str(video_path),
+        title="title",
+        desc="desc",
+        tags=["tag"],
+        tid=36,
+        user_cookie=str(cookie_path),
+        upload_cfg=UploadConfig(),
+        cover_path=str(cover_path),
+    )
+
+    assert "--cover" in calls["cmd"]
+    assert calls["cmd"][calls["cmd"].index("--cover") + 1] == str(cover_path.resolve())
+
+
 def test_login_runs_biliup_from_cookie_parent(tmp_path, monkeypatch):
     from src.infra import biliup
 

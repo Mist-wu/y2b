@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.infra.yt_dlp import download_subtitle, download_video, fetch_video_metadata, normalize_video_url
+from src.infra.yt_dlp import (
+    download_subtitle,
+    download_thumbnail_from_metadata,
+    download_video,
+    fetch_video_metadata,
+    normalize_video_url,
+)
 
 
 class DownloaderService:
@@ -48,5 +54,13 @@ class DownloaderService:
             cookies_path=self.youtube_cookies_path,
             cookies_from_browser=self.youtube_cookies_from_browser,
             extractor_args=self.youtube_extractor_args,
+            logger=logger,
+        )
+
+    def download_thumbnail(self, meta: dict, base_dir: str | Path, *, video_id: str, logger=None) -> Path:
+        return download_thumbnail_from_metadata(
+            meta,
+            base_dir,
+            video_id=video_id,
             logger=logger,
         )

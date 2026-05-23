@@ -103,6 +103,11 @@ class SingleVideoPipeline:
                 self.state.update_job(job_id, status="completed", progress=100, current_step="已完成（未上传）")
             else:
                 self._step(job_id, "uploading", 88, "上传到 Bilibili")
+                cover_path: Path | None = None
+                try:
+                    cover_path = self.downloader.download_thumbnail(meta, work_dir, video_id=video_id, logger=self.logger)
+                except Exception as e:
+                    self.logger.warning(f"下载 YouTube 封面失败，将使用 Bilibili 默认封面: {e}")
                 upload_video = {
                     "id": video_id,
                     "title": original_title,
@@ -123,7 +128,14 @@ class SingleVideoPipeline:
                     tags=tags,
                     tid=tid,
                 )
-                bvid = self.uploader.upload(rendered_path, final_title, upload_video, tags=final_tags, tid=final_tid)
+                bvid = self.uploader.upload(
+                    rendered_path,
+                    final_title,
+                    upload_video,
+                    tags=final_tags,
+                    tid=final_tid,
+                    cover_path=cover_path,
+                )
                 self.state.update_job(job_id, status="uploaded", progress=100, current_step="上传完成", bvid=bvid)
 
             record = self.state.get_job(job_id) or {}

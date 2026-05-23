@@ -24,6 +24,7 @@ def upload(
     user_cookie: str,
     upload_cfg,
     extra_args: list[str] | None = None,
+    cover_path: str | None = None,
 ) -> str:
     resolved_exec = resolve_cli(executable) or executable
     cookie_path = Path(user_cookie).resolve()
@@ -50,6 +51,8 @@ def upload(
         cmd.extend(["--source", str(upload_cfg.source)])
     if getattr(upload_cfg, "line", None):
         cmd.extend(["--line", str(upload_cfg.line)])
+    if cover_path:
+        cmd.extend(["--cover", str(Path(cover_path).resolve())])
     if extra_args:
         cmd.extend(extra_args)
 
