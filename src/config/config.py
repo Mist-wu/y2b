@@ -71,6 +71,7 @@ class BilibiliUploadConfig(StrictModel):
     copyright: int | None = None
     source: str | None = None
     line: str | None = None
+    no_reprint: int | None = Field(default=None, ge=0, le=1)
 
 
 class BilibiliConfig(StrictModel):

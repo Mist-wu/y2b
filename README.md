@@ -116,6 +116,8 @@ y2b translate <url> \
 
 `bilibili.upload.line` 默认保持为 `null`，由 `biliup` 使用默认上传线路；如需手动指定，必须使用当前 `biliup upload --help` 列出的合法线路值。
 
+Bilibili 创作声明可通过 `bilibili.upload` 配置：`copyright: 1` 表示自制，`2` 表示转载；`no_reprint: 0` 表示不勾选“未经作者允许，禁止转载”，`1` 表示勾选。
+
 只生成压制后视频，不上传：
 
 ```bash

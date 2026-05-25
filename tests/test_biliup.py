@@ -128,6 +128,51 @@ def test_upload_passes_cover_when_provided(tmp_path, monkeypatch):
     assert calls["cmd"][calls["cmd"].index("--cover") + 1] == str(cover_path.resolve())
 
 
+def test_upload_passes_no_reprint_when_configured(tmp_path, monkeypatch):
+    from src.infra import biliup
+
+    cookie_path = tmp_path / "data" / "bilibili_cookies.json"
+    video_path = tmp_path / "output" / "video.mp4"
+    cookie_path.parent.mkdir()
+    video_path.parent.mkdir()
+    cookie_path.write_text("{}", encoding="utf-8")
+    video_path.write_text("video", encoding="utf-8")
+    calls = {}
+
+    class UploadConfig:
+        copyright = 1
+        source = None
+        line = None
+        no_reprint = 0
+
+    class Result:
+        stdout = "BV12YL46bEN7"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(biliup, "resolve_cli", lambda executable: executable)
+    monkeypatch.setattr(biliup.subprocess, "run", fake_run)
+
+    biliup.upload(
+        executable="biliup",
+        user_cookie_arg="-u",
+        video_path=str(video_path),
+        title="title",
+        desc="desc",
+        tags=["tag"],
+        tid=36,
+        user_cookie=str(cookie_path),
+        upload_cfg=UploadConfig(),
+    )
+
+    assert "--no-reprint" in calls["cmd"]
+    assert calls["cmd"][calls["cmd"].index("--no-reprint") + 1] == "0"
+
+
 def test_login_runs_biliup_from_cookie_parent(tmp_path, monkeypatch):
     from src.infra import biliup
 

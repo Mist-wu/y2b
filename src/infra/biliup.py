@@ -51,6 +51,8 @@ def upload(
         cmd.extend(["--source", str(upload_cfg.source)])
     if getattr(upload_cfg, "line", None):
         cmd.extend(["--line", str(upload_cfg.line)])
+    if getattr(upload_cfg, "no_reprint", None) is not None:
+        cmd.extend(["--no-reprint", str(upload_cfg.no_reprint)])
     if cover_path:
         cmd.extend(["--cover", str(Path(cover_path).resolve())])
     if extra_args:
