@@ -11,6 +11,7 @@ from src.infra.yt_dlp import (
     download_thumbnail_from_metadata,
     select_best_thumbnail_url,
     validate_youtube_auth,
+    fetch_video_metadata,
 )
 
 
@@ -299,3 +300,22 @@ def test_build_video_format_selector_hls_fallback():
 
     assert expr.startswith("bv*+ba[language^=en][format_note*=original]/")
     assert expr.endswith("bv*+ba/b")
+
+
+def test_fetch_metadata_passes_configured_retry_count(monkeypatch):
+    captured = {}
+
+    class Result:
+        stdout = '{"id": "demo"}\n'
+
+    monkeypatch.setattr("src.infra.yt_dlp._yt_dlp_bin", lambda: "yt-dlp")
+    monkeypatch.setattr("src.infra.yt_dlp._build_js_runtime_args", lambda: [])
+
+    def fake_run(cmd, *, action):
+        captured["cmd"] = cmd
+        return Result()
+
+    monkeypatch.setattr("src.infra.yt_dlp._run_yt_dlp", fake_run)
+
+    assert fetch_video_metadata("demo", retries=7)["id"] == "demo"
+    assert captured["cmd"][captured["cmd"].index("--retries") + 1] == "7"

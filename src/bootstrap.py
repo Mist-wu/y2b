@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -20,19 +19,8 @@ class CheckResult:
 
 
 def ensure_runtime_tools(config, logger=None) -> None:
-    _ensure_tool(
-        "yt-dlp",
-        logger,
-        install_candidates=[[sys.executable, "-m", "pip", "install", "-U", "yt-dlp"]],
-    )
-    _ensure_tool(
-        config.bilibili.executable,
-        logger,
-        install_candidates=[
-            ["uv", "tool", "install", "biliup"],
-            [sys.executable, "-m", "pip", "install", "-U", "biliup"],
-        ],
-    )
+    _ensure_tool("yt-dlp", logger)
+    _ensure_tool(config.bilibili.executable, logger)
     if not cli_exists("ffmpeg") or not cli_exists("ffprobe"):
         raise RuntimeError("未检测到 ffmpeg/ffprobe，请先安装 ffmpeg。")
 
@@ -87,7 +75,8 @@ def run_checks(config, *, probe_url: str | None = None) -> list[CheckResult]:
     )
 
     biliup_work_dir = _biliup_work_dir(bili_cookie.resolve())
-    stray_artifacts = [name for name in BILIUP_ARTIFACT_NAMES if Path(name).exists()]
+    app_root = biliup_work_dir.parent
+    stray_artifacts = [name for name in BILIUP_ARTIFACT_NAMES if (app_root / name).exists()]
     if stray_artifacts:
         results.append(
             CheckResult(
@@ -152,14 +141,7 @@ def ensure_bilibili_ready(config) -> None:
 
 
 def login_bilibili(config) -> None:
-    _ensure_tool(
-        config.bilibili.executable,
-        None,
-        install_candidates=[
-            ["uv", "tool", "install", "biliup"],
-            [sys.executable, "-m", "pip", "install", "-U", "biliup"],
-        ],
-    )
+    _ensure_tool(config.bilibili.executable, None)
     cookie_path = Path(config.bilibili_cookies)
     cookie_path.parent.mkdir(parents=True, exist_ok=True)
     biliup_login(
@@ -169,25 +151,10 @@ def login_bilibili(config) -> None:
     )
 
 
-def _ensure_tool(tool_name: str, logger, install_candidates: list[list[str]]) -> None:
+def _ensure_tool(tool_name: str, logger) -> None:
     if cli_exists(tool_name):
         if logger:
             logger.info(f"已检测到工具: {tool_name}")
         return
 
-    if logger:
-        logger.warning(f"未检测到工具 {tool_name}，开始自动安装...")
-    for cmd in install_candidates:
-        try:
-            if logger:
-                logger.info(f"执行安装命令: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-            if cli_exists(tool_name):
-                if logger:
-                    logger.info(f"{tool_name} 安装成功")
-                return
-        except Exception as e:
-            if logger:
-                logger.warning(f"安装命令失败 ({' '.join(cmd)}): {e}")
-
-    raise RuntimeError(f"无法自动安装 {tool_name}，请手动安装后重试。")
+    raise RuntimeError(f"未检测到 {tool_name}，请先执行 uv sync 或手动安装后重试。")

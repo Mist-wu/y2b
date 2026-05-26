@@ -8,14 +8,18 @@ def resolve_cli(command: str) -> str | None:
     if cmd_path.is_file():
         return str(cmd_path)
 
-    # Support running with `./.venv/bin/python main.py` (PATH may not include venv bin)
-    bin_dir = Path(sys.executable).resolve().parent
-    candidates = [
-        bin_dir / command,
-        bin_dir / f"{command}.exe",
-        bin_dir / f"{command}.cmd",
-        bin_dir / f"{command}.bat",
-    ]
+    # Support both `python main.py` and an absolute venv console-script entrypoint.
+    bin_dirs = [Path(sys.executable).resolve().parent, Path(sys.argv[0]).resolve().parent]
+    candidates = []
+    for bin_dir in dict.fromkeys(bin_dirs):
+        candidates.extend(
+            [
+                bin_dir / command,
+                bin_dir / f"{command}.exe",
+                bin_dir / f"{command}.cmd",
+                bin_dir / f"{command}.bat",
+            ]
+        )
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)

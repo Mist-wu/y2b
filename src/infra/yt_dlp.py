@@ -283,6 +283,7 @@ def fetch_video_metadata(
     cookies_path: str | None = YOUTUBE_COOKIES_PATH,
     cookies_from_browser: str | None = None,
     extractor_args: list[str] | None = None,
+    retries: int = 3,
 ) -> dict:
     url = normalize_video_url(video_url_or_id)
     cmd = [
@@ -291,6 +292,8 @@ def fetch_video_metadata(
         "--dump-json",
         "--no-warnings",
         "--no-playlist",
+        "--retries",
+        str(max(1, int(retries))),
         *_build_js_runtime_args(),
         *_build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser),
         *_build_extractor_args(extractor_args),
@@ -468,6 +471,7 @@ def download_video(
     cookies_from_browser: str | None = None,
     logger=None,
     extractor_args: list[str] | None = None,
+    retries: int = 3,
 ):
     auth_args = _build_auth_args(cookies_path=cookies_path, cookies_from_browser=cookies_from_browser)
     user_extractor_args = _build_extractor_args(extractor_args)
@@ -479,9 +483,9 @@ def download_video(
         "--newline",
         "--progress",
         "--retries",
-        "3",
+        str(max(1, int(retries))),
         "--fragment-retries",
-        "3",
+        str(max(1, int(retries))),
         "--merge-output-format",
         "mp4",
         "-S",
@@ -594,6 +598,7 @@ def download_subtitle(
     cookies_from_browser: str | None = None,
     extractor_args: list[str] | None = None,
     logger=None,
+    retries: int = 3,
 ) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -612,6 +617,8 @@ def download_subtitle(
         "vtt/srt/best",
         "--no-playlist",
         "--no-warnings",
+        "--retries",
+        str(max(1, int(retries))),
         "-o",
         out_template,
         *_build_js_runtime_args(),

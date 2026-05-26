@@ -18,10 +18,12 @@ class DownloaderService:
         youtube_cookies_path: str | None,
         youtube_cookies_from_browser: str | None,
         youtube_extractor_args: list[str] | None = None,
+        max_retry: int = 3,
     ):
         self.youtube_cookies_path = youtube_cookies_path
         self.youtube_cookies_from_browser = youtube_cookies_from_browser
         self.youtube_extractor_args = youtube_extractor_args or []
+        self.max_retry = max(1, int(max_retry))
 
     def fetch_metadata(self, url: str) -> dict:
         return fetch_video_metadata(
@@ -29,6 +31,7 @@ class DownloaderService:
             cookies_path=self.youtube_cookies_path,
             cookies_from_browser=self.youtube_cookies_from_browser,
             extractor_args=self.youtube_extractor_args,
+            retries=self.max_retry,
         )
 
     def download_url(self, url: str, base_dir: str | Path, *, video_id: str, logger=None) -> Path:
@@ -42,6 +45,7 @@ class DownloaderService:
             cookies_from_browser=self.youtube_cookies_from_browser,
             logger=logger,
             extractor_args=self.youtube_extractor_args,
+            retries=self.max_retry,
         )
         return out
 
@@ -55,6 +59,7 @@ class DownloaderService:
             cookies_from_browser=self.youtube_cookies_from_browser,
             extractor_args=self.youtube_extractor_args,
             logger=logger,
+            retries=self.max_retry,
         )
 
     def download_thumbnail(self, meta: dict, base_dir: str | Path, *, video_id: str, logger=None) -> Path:
