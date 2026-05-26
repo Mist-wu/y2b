@@ -55,6 +55,10 @@ def burn_ass_subtitle(
     output_video: str | Path,
     fonts_dir: str | Path | None = None,
     logger=None,
+    codec: str = "libx264",
+    preset: str | None = "medium",
+    crf: int | None = 20,
+    bitrate: str | None = None,
 ) -> Path:
     output = Path(output_video)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -71,15 +75,19 @@ def burn_ass_subtitle(
         "-vf",
         filter_arg,
         "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
+        codec,
+    ]
+    if preset:
+        cmd.extend(["-preset", preset])
+    if crf is not None:
+        cmd.extend(["-crf", str(crf)])
+    if bitrate:
+        cmd.extend(["-b:v", bitrate])
+    cmd.extend([
         "-c:a",
         "copy",
         str(output),
-    ]
+    ])
     if logger:
         logger.info("[ffmpeg] " + " ".join(cmd))
     process = subprocess.Popen(

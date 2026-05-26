@@ -41,4 +41,8 @@ def test_state_repository_flow(tmp_path: Path):
     assert job["error"] == "Some fatal error"
     assert job["current_step"] == "失败"
 
+    active_job = repo.create_job(url="https://youtube.com/watch?v=unfinished")
+    assert repo.mark_unfinished_interrupted() == 1
+    assert repo.get_job(active_job)["status"] == "interrupted"
+
     repo.close()

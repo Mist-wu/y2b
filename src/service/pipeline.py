@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import time
 from pathlib import Path
 
@@ -21,6 +24,7 @@ class SingleVideoPipeline:
             youtube_cookies_path=yt_cfg.cookies,
             youtube_cookies_from_browser=yt_cfg.cookies_from_browser,
             youtube_extractor_args=yt_cfg.extractor_args,
+            max_retry=config.max_retry,
         )
         self.translator = TranslatorService(config, logger)
         self.subtitle = SubtitleService(config, self.translator, logger)
@@ -39,6 +43,8 @@ class SingleVideoPipeline:
         tid: int | None = None,
         no_upload: bool = False,
         keep_files: bool = False,
+        resume: bool = False,
+        render_profile: str | None = None,
     ) -> dict:
         job_id = job_id or self.state.create_job(url=url)
         source_lang = source_lang or self.config.translation.source_lang
@@ -46,6 +52,7 @@ class SingleVideoPipeline:
         work_dir: Path | None = None
         downloaded_video: Path | None = None
         started = time.time()
+        succeeded = False
 
         try:
             self._step(job_id, "checking", 5, "检查运行环境")
@@ -66,42 +73,81 @@ class SingleVideoPipeline:
             output_dir = Path(self.config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            self._step(job_id, "downloading_video", 20, "下载 YouTube 视频")
-            downloaded_video = self.downloader.download_url(webpage_url, work_dir, video_id=video_id, logger=self.logger)
-            self.state.update_job(job_id, video_path=str(downloaded_video))
-
-            self._step(job_id, "downloading_subtitle", 35, f"下载 {source_lang} 字幕")
-            raw_subtitle = self.downloader.download_subtitle(
-                webpage_url,
-                work_dir,
-                video_id=video_id,
-                source_lang=source_lang,
-                logger=self.logger,
-            )
+            self._step(job_id, "downloading_subtitle", 20, f"下载 {source_lang} 字幕")
+            raw_subtitle = self._find_existing_subtitle(work_dir, video_id, source_lang) if resume else None
+            if raw_subtitle:
+                self.logger.info(f"恢复任务：复用字幕文件 {raw_subtitle}")
+            else:
+                raw_subtitle = self.downloader.download_subtitle(
+                    webpage_url,
+                    work_dir,
+                    video_id=video_id,
+                    source_lang=source_lang,
+                    logger=self.logger,
+                )
             self.state.update_job(job_id, subtitle_path=str(raw_subtitle))
 
-            self._step(job_id, "translating_subtitle", 50, f"字幕 {source_lang} -> {target_lang}")
             cues = self.subtitle.parse(raw_subtitle)
             if not cues:
                 raise RuntimeError("字幕解析结果为空")
-            cues = self.subtitle.translate_cues(cues, source_lang=source_lang, target_lang=target_lang)
+
+            self._step(job_id, "downloading_video", 35, "下载 YouTube 视频")
+            expected_video = work_dir / f"{video_id}.mp4"
+            if resume and self._can_reuse_video(expected_video):
+                downloaded_video = expected_video
+                self.logger.info(f"恢复任务：复用视频文件 {downloaded_video}")
+            else:
+                downloaded_video = self.downloader.download_url(webpage_url, work_dir, video_id=video_id, logger=self.logger)
+            self.state.update_job(job_id, video_path=str(downloaded_video))
+
+            self._step(job_id, "translating_subtitle", 50, f"字幕 {source_lang} -> {target_lang}")
+            segmented_cache_path = self._segmented_cache_path(work_dir, video_id, source_lang)
+            cache_path = self._translated_cache_path(work_dir, video_id, source_lang, target_lang)
+            if resume and cache_path.exists():
+                try:
+                    cues = self.subtitle.load_cues(cache_path)
+                    self.logger.info(f"恢复任务：复用字幕翻译缓存 {cache_path}")
+                except Exception as e:
+                    self.logger.warning(f"字幕翻译缓存不可用，将重新翻译: {e}")
+                    cues = self._segment_and_translate(
+                        cues, segmented_cache_path, cache_path, source_lang, target_lang, resume=resume
+                    )
+            else:
+                cues = self._segment_and_translate(
+                    cues, segmented_cache_path, cache_path, source_lang, target_lang, resume=resume
+                )
 
             self._step(job_id, "rendering_subtitle", 70, "生成双语 ASS 字幕并压制")
-            width, height = self.renderer.get_resolution(downloaded_video)
             ass_path = work_dir / f"{video_id}.bilingual.ass"
-            self.subtitle.write_bilingual_ass(cues, ass_path, width=width, height=height)
             rendered_path = output_dir / f"{video_id}.bilingual.mp4"
-            self.renderer.burn_subtitle(input_video=downloaded_video, ass_path=ass_path, output_video=rendered_path)
+            render_manifest_path = output_dir / f"{video_id}.bilingual.render.json"
+            render_profile_name = render_profile or self.config.render.profile
+            width, height = self.renderer.get_resolution(downloaded_video)
+            self.subtitle.write_bilingual_ass(cues, ass_path, width=width, height=height)
+            if resume and self._can_reuse_rendered_output(
+                rendered_path,
+                render_manifest_path,
+                ass_path,
+                downloaded_video,
+                render_profile_name,
+            ):
+                self.logger.info(f"恢复任务：复用已压制视频 {rendered_path}")
+            else:
+                self.renderer.burn_subtitle(
+                    input_video=downloaded_video,
+                    ass_path=ass_path,
+                    output_video=rendered_path,
+                    profile=render_profile,
+                )
+                self._write_render_manifest(render_manifest_path, ass_path, downloaded_video, render_profile_name)
             self.state.update_job(job_id, subtitle_path=str(ass_path), rendered_path=str(rendered_path))
 
-            self._step(job_id, "translating_title", 82, "生成 Bilibili 标题")
-            final_title = title_override or self.translator.translate_title(original_title, self.config.bilibili.title_prefix)
-            self.state.update_job(job_id, translated_title=final_title)
-
             if no_upload:
-                self._step(job_id, "uploaded", 100, "已完成（未上传）")
                 self.state.update_job(job_id, status="completed", progress=100, current_step="已完成（未上传）")
             else:
+                self._step(job_id, "translating_title", 82, "生成 Bilibili 标题")
+                final_title = title_override or self.translator.translate_title(original_title, self.config.bilibili.title_prefix)
+                self.state.update_job(job_id, translated_title=final_title)
                 self._step(job_id, "uploading", 88, "上传到 Bilibili")
                 cover_path: Path | None = None
                 try:
@@ -140,6 +186,7 @@ class SingleVideoPipeline:
 
             record = self.state.get_job(job_id) or {}
             self.logger.info(f"任务完成 job_id={job_id} 耗时={time.time() - started:.1f}s")
+            succeeded = True
             return record
 
         except KeyboardInterrupt:
@@ -150,7 +197,7 @@ class SingleVideoPipeline:
             self.logger.error(f"任务失败 job_id={job_id}: {e}")
             raise
         finally:
-            if not keep_files and work_dir and work_dir.exists():
+            if succeeded and not keep_files and work_dir and work_dir.exists():
                 self._cleanup_workdir(work_dir, preserve_suffixes={".ass"})
 
     def _resolve_upload_metadata(
@@ -197,6 +244,92 @@ class SingleVideoPipeline:
     def _step(self, job_id: str, status: str, progress: int, step: str) -> None:
         self.logger.info(f"[{job_id}] {step}")
         self.state.update_job(job_id, status=status, progress=progress, current_step=step, error=None)
+
+    def _find_existing_subtitle(self, work_dir: Path, video_id: str, source_lang: str) -> Path | None:
+        candidates = [
+            *work_dir.glob(f"{video_id}.{source_lang}*.vtt"),
+            *work_dir.glob(f"{video_id}.{source_lang}*.srt"),
+        ]
+        return next((path for path in sorted(candidates) if path.stat().st_size > 0), None)
+
+    def _translated_cache_path(self, work_dir: Path, video_id: str, source_lang: str, target_lang: str) -> Path:
+        lang_key = re.sub(r"[^A-Za-z0-9_-]", "_", f"{source_lang}-{target_lang}")
+        return work_dir / f"{video_id}.{lang_key}.translated.json"
+
+    def _segmented_cache_path(self, work_dir: Path, video_id: str, source_lang: str) -> Path:
+        lang_key = re.sub(r"[^A-Za-z0-9_-]", "_", source_lang)
+        return work_dir / f"{video_id}.{lang_key}.segmented.json"
+
+    def _segment_and_translate(
+        self,
+        cues: list,
+        segmented_cache_path: Path,
+        translated_cache_path: Path,
+        source_lang: str,
+        target_lang: str,
+        *,
+        resume: bool,
+    ) -> list:
+        if resume and segmented_cache_path.exists():
+            try:
+                cues = self.subtitle.load_cues(segmented_cache_path)
+                self.logger.info(f"恢复任务：复用智能分句缓存 {segmented_cache_path}")
+            except Exception as e:
+                self.logger.warning(f"智能分句缓存不可用，将重新分句: {e}")
+                cues = self.subtitle.segment_cues(cues, source_lang=source_lang)
+                self.subtitle.save_cues(cues, segmented_cache_path)
+        else:
+            cues = self.subtitle.segment_cues(cues, source_lang=source_lang)
+            self.subtitle.save_cues(cues, segmented_cache_path)
+        cues = self.subtitle.translate_segmented_cues(cues, source_lang=source_lang, target_lang=target_lang)
+        self.subtitle.save_cues(cues, translated_cache_path)
+        return cues
+
+    def _can_reuse_video(self, path: Path) -> bool:
+        if not path.exists() or path.stat().st_size <= 0:
+            return False
+        try:
+            self.renderer.get_resolution(path)
+            return True
+        except Exception as e:
+            self.logger.warning(f"恢复任务：已有视频无法校验，将重新生成 {path}: {e}")
+            return False
+
+    def _can_reuse_rendered_output(
+        self,
+        rendered_path: Path,
+        manifest_path: Path,
+        ass_path: Path,
+        input_video: Path,
+        profile_name: str,
+    ) -> bool:
+        if not self._can_reuse_video(rendered_path) or not manifest_path.exists():
+            return False
+        try:
+            expected = self._render_manifest_payload(ass_path, input_video, profile_name)
+            actual = json.loads(manifest_path.read_text(encoding="utf-8"))
+            return actual == expected
+        except Exception as e:
+            self.logger.warning(f"恢复任务：压制缓存校验失败，将重新压制: {e}")
+            return False
+
+    def _write_render_manifest(self, path: Path, ass_path: Path, input_video: Path, profile_name: str) -> None:
+        path.write_text(
+            json.dumps(self._render_manifest_payload(ass_path, input_video, profile_name), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _render_manifest_payload(self, ass_path: Path, input_video: Path, profile_name: str) -> dict:
+        video_stat = input_video.stat()
+        profile = getattr(self.config.render, profile_name).model_dump(mode="json")
+        return {
+            "ass_sha256": hashlib.sha256(ass_path.read_bytes()).hexdigest(),
+            "input_video": str(input_video.resolve()),
+            "input_size": video_stat.st_size,
+            "input_mtime_ns": video_stat.st_mtime_ns,
+            "profile_name": profile_name,
+            "profile": profile,
+        }
 
     def _cleanup_workdir(self, work_dir: Path, *, preserve_suffixes: set[str]) -> None:
         try:

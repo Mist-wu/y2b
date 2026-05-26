@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from src.bootstrap import login_bilibili, run_checks
-from src.config.config import load_config, save_youtube_auth_config
+from src.config.config import load_config, runtime_root, save_youtube_auth_config
 from src.logger import setup_logger
 from src.service.pipeline import SingleVideoPipeline
 from src.state import StateRepository
@@ -22,7 +22,7 @@ console = Console()
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(dotenv_path=Path(".env"))
+    load_dotenv(dotenv_path=runtime_root() / ".env")
     parser = build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):
@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     jobs = sub.add_parser("jobs", help="查看最近任务")
     jobs.add_argument("--limit", type=int, default=20)
+    jobs.add_argument("--mark-interrupted", action="store_true", help="将遗留执行中任务显式标记为已中断")
     jobs.set_defaults(func=cmd_jobs)
 
     status = sub.add_parser("status", help="查看任务详情")
@@ -88,6 +89,8 @@ def add_translate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tid", type=int, help="Bilibili 分区 ID")
     parser.add_argument("--no-upload", action="store_true", help="只下载、翻译和压制，不上传")
     parser.add_argument("--keep-files", action="store_true", help="保留下载和中间文件")
+    parser.add_argument("--resume-job", help="恢复已有任务 ID，并复用校验通过的阶段产物")
+    parser.add_argument("--render-profile", choices=("quality", "fast"), help="压制配置：quality 或 fast")
 
 
 def cmd_login_youtube(args) -> int:
@@ -100,7 +103,7 @@ def cmd_login_youtube(args) -> int:
         print(f"已配置 YouTube 认证：cookies_from_browser={args.browser}")
         return 0
 
-    target = Path(config.youtube.cookies or "./data/youtube_cookies.txt")
+    target = Path(config.youtube.cookies or (runtime_root() / "data" / "youtube_cookies.txt"))
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if args.cookies_file:
@@ -180,9 +183,18 @@ def cmd_translate(args) -> int:
     config = load_config()
     logger = setup_logger(config.log_dir)
     state = StateRepository(config.state_db)
-    job_id = state.create_job(url=args.url)
-    console.print(f"创建任务: [cyan]{job_id}[/]")
     try:
+        if args.resume_job:
+            previous = state.get_job(args.resume_job)
+            if not previous:
+                raise RuntimeError(f"待恢复任务不存在: {args.resume_job}")
+            if previous.get("url") != args.url:
+                raise RuntimeError("--resume-job 对应的 URL 与当前输入不一致")
+            job_id = args.resume_job
+            console.print(f"恢复任务: [cyan]{job_id}[/]")
+        else:
+            job_id = state.create_job(url=args.url)
+            console.print(f"创建任务: [cyan]{job_id}[/]")
         pipeline = SingleVideoPipeline(config, logger, state)
         with console.status("[bold green]任务执行中，详细日志见 logs/app.log...[/]", spinner="dots"):
             record = pipeline.run(
@@ -195,6 +207,8 @@ def cmd_translate(args) -> int:
                 tid=args.tid,
                 no_upload=args.no_upload,
                 keep_files=args.keep_files,
+                resume=bool(args.resume_job),
+                render_profile=args.render_profile,
             )
         print_job_detail(record)
         return 0
@@ -206,6 +220,9 @@ def cmd_jobs(args) -> int:
     config = load_config()
     state = StateRepository(config.state_db)
     try:
+        if args.mark_interrupted:
+            interrupted = state.mark_unfinished_interrupted()
+            console.print(f"已标记 {interrupted} 个执行中任务为中断，可使用 --resume-job 恢复。")
         rows = state.list_jobs(args.limit)
     finally:
         state.close()

@@ -113,6 +113,19 @@ class StateRepository:
         self.conn.commit()
         return jid
 
+    def mark_unfinished_interrupted(self) -> int:
+        now = int(time.time())
+        cur = self.conn.execute(
+            """
+            UPDATE jobs
+            SET status='interrupted', current_step='上次执行已中断，可使用 --resume-job 恢复', updated_at=?
+            WHERE status NOT IN ('completed', 'uploaded', 'failed', 'interrupted')
+            """,
+            (now,),
+        )
+        self.conn.commit()
+        return int(cur.rowcount)
+
     def update_job(self, job_id: str, **fields: Any) -> None:
         if not fields:
             return
