@@ -5,11 +5,14 @@ from src.state import StateRepository
 def test_state_repository_flow(tmp_path: Path):
     db_file = tmp_path / "test_state.db"
     repo = StateRepository(str(db_file))
+    tables = {
+        row[0]
+        for row in repo.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
 
-    # Test meta functions
-    repo.set_meta("test_key", "test_val")
-    assert repo.get_meta("test_key") == "test_val"
-    assert repo.get_meta("non_existent") is None
+    assert "jobs" in tables
+    assert "videos" not in tables
+    assert "meta" not in tables
 
     # Test job lifecycle
     job_id = repo.create_job(url="https://youtube.com/watch?v=123")

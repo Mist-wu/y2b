@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Any
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 
 
 class LLMAPIError(RuntimeError):

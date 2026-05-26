@@ -52,16 +52,6 @@ class SubtitleService:
             raise RuntimeError("字幕缓存为空或包含无效条目")
         return cues
 
-    def translate_cues(
-        self,
-        cues: list[SubtitleCue],
-        *,
-        source_lang: str,
-        target_lang: str,
-    ) -> list[SubtitleCue]:
-        cues = self.segment_cues(cues, source_lang=source_lang)
-        return self.translate_segmented_cues(cues, source_lang=source_lang, target_lang=target_lang)
-
     def segment_cues(self, cues: list[SubtitleCue], *, source_lang: str) -> list[SubtitleCue]:
         return self._segment_cues_with_deepseek(cues, source_lang=source_lang)
 

@@ -37,25 +37,6 @@ class StateRepository:
             )
             """
         )
-        # Kept only for compatibility with older database files.
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS videos (
-                video_id TEXT PRIMARY KEY,
-                status TEXT,
-                bvid TEXT,
-                error TEXT
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-            """
-        )
         self.conn.commit()
 
     def _migrate_jobs_table(self):
@@ -83,22 +64,6 @@ class StateRepository:
 
     def close(self):
         self.conn.close()
-
-    def get_meta(self, key: str) -> str | None:
-        cur = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,))
-        row = cur.fetchone()
-        return None if row is None else row["value"]
-
-    def set_meta(self, key: str, value: str):
-        self.conn.execute(
-            """
-            INSERT INTO meta(key, value)
-            VALUES(?, ?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """,
-            (key, value),
-        )
-        self.conn.commit()
 
     def create_job(self, *, url: str, job_id: str | None = None) -> str:
         now = int(time.time())
