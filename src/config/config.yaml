@@ -22,6 +22,7 @@ translation:
   target_lang: zh-CN
   max_title_length: 70
   subtitle_batch_size: 50
+  subtitle_concurrency: 4
   segmentation_batch_size: 300
   segmentation_concurrency: 4
   style_prompt: 适合B站的中文标题，简洁、自然、不夸张
@@ -44,7 +45,9 @@ bilibili:
   cookies: ./data/bilibili_cookies.json
   executable: biliup
   user_cookie_arg: -u
-  default_tags: []
+  default_tags:
+    - 翻译
+    - YouTube
   default_tid: 4
   title_prefix: ''
   auto_metadata: true
@@ -59,3 +62,12 @@ bilibili:
     source: YouTube
     line: null
     no_reprint: 0
+render:
+  profile: quality
+  quality:
+    codec: libx264
+    preset: medium
+    crf: 20
+  fast:
+    codec: h264_videotoolbox
+    bitrate: 6M

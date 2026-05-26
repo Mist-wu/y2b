@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 ENV_PREFIX = "Y2B_"
+PROJECT_ROOT = CONFIG_PATH.resolve().parents[2]
 
 
 class StrictModel(BaseModel):
@@ -43,6 +44,7 @@ class TranslationConfig(StrictModel):
     style_prompt: str = "适合B站的中文标题，简洁、自然、不夸张"
     glossary: dict[str, str] = Field(default_factory=dict)
     subtitle_batch_size: int = Field(default=50, ge=1, le=200)
+    subtitle_concurrency: int = Field(default=4, ge=1, le=8)
     segmentation_batch_size: int = Field(default=300, ge=40, le=800)
     segmentation_concurrency: int = Field(default=2, ge=1, le=6)
 
@@ -88,6 +90,31 @@ class BilibiliConfig(StrictModel):
     extra_args: list[str] = Field(default_factory=list)
     upload: BilibiliUploadConfig = Field(default_factory=BilibiliUploadConfig)
 
+    @field_validator("default_tags")
+    @classmethod
+    def default_tags_not_empty(cls, value: list[str]) -> list[str]:
+        tags = [str(tag).strip() for tag in value if str(tag).strip()]
+        if not tags:
+            raise ValueError("bilibili.default_tags 至少需要一个回退标签")
+        return tags
+
+
+class RenderProfileConfig(StrictModel):
+    codec: str
+    preset: str | None = None
+    crf: int | None = Field(default=None, ge=0, le=51)
+    bitrate: str | None = None
+
+
+class RenderConfig(StrictModel):
+    profile: Literal["quality", "fast"] = "quality"
+    quality: RenderProfileConfig = Field(
+        default_factory=lambda: RenderProfileConfig(codec="libx264", preset="medium", crf=20)
+    )
+    fast: RenderProfileConfig = Field(
+        default_factory=lambda: RenderProfileConfig(codec="h264_videotoolbox", bitrate="6M")
+    )
+
 
 class GlobalConfig(StrictModel):
     download_dir: str = "./downloads"
@@ -108,6 +135,7 @@ class AppConfig(StrictModel):
     translation: TranslationConfig = Field(default_factory=TranslationConfig)
     subtitle_style: SubtitleStyleConfig = Field(default_factory=SubtitleStyleConfig)
     bilibili: BilibiliConfig = Field(default_factory=BilibiliConfig)
+    render: RenderConfig = Field(default_factory=RenderConfig)
 
     @property
     def bilibili_cookies(self) -> str:
@@ -135,13 +163,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     try:
         normalized = _normalize_legacy_yaml(raw)
         _apply_env_overrides(normalized)
-        return AppConfig.model_validate(normalized)
+        config = AppConfig.model_validate(normalized)
+        return _resolve_runtime_paths(config, runtime_root(config_path))
     except ValidationError as e:
         raise ConfigLoadError(f"配置校验失败: {config_path}\n{e}") from e
 
 
 def _normalize_legacy_yaml(raw: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"global", "ai", "youtube", "translation", "subtitle_style", "subtitle", "bilibili"}
+    allowed = {"global", "ai", "youtube", "translation", "subtitle_style", "subtitle", "bilibili", "render"}
     unknown = sorted(set(raw) - allowed)
     if unknown:
         raise ConfigLoadError(f"配置包含未知顶层字段: {', '.join(unknown)}")
@@ -165,13 +194,14 @@ def _normalize_legacy_yaml(raw: dict[str, Any]) -> dict[str, Any]:
         "translation": raw.get("translation", {}) or {},
         "subtitle_style": style or {},
         "bilibili": raw.get("bilibili", {}) or {},
+        "render": raw.get("render", {}) or {},
     }
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> None:
     """Support env overrides like Y2B_AI__MODEL=deepseek-v4-flash."""
     for key, value in os.environ.items():
-        if not key.startswith(ENV_PREFIX):
+        if not key.startswith(ENV_PREFIX) or key == "Y2B_HOME":
             continue
         path = [part.lower() for part in key[len(ENV_PREFIX) :].split("__") if part]
         if not path:
@@ -191,6 +221,32 @@ def _parse_env_value(value: str) -> Any:
         return yaml.safe_load(value)
     except Exception:
         return value
+
+
+def runtime_root(config_path: str | Path | None = None) -> Path:
+    override = os.getenv("Y2B_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    if config_path and Path(config_path).resolve() != CONFIG_PATH.resolve():
+        return Path(config_path).resolve().parent
+    return PROJECT_ROOT
+
+
+def _resolve_runtime_paths(config: AppConfig, base_dir: Path) -> AppConfig:
+    def resolved(value: str | None) -> str | None:
+        if value is None:
+            return None
+        path = Path(value).expanduser()
+        return str(path if path.is_absolute() else (base_dir / path).resolve())
+
+    config.download_dir = resolved(config.download_dir) or config.download_dir
+    config.output_dir = resolved(config.output_dir) or config.output_dir
+    config.log_dir = resolved(config.log_dir) or config.log_dir
+    config.state_db = resolved(config.state_db) or config.state_db
+    config.youtube.cookies = resolved(config.youtube.cookies)
+    config.bilibili.cookies = resolved(config.bilibili.cookies) or config.bilibili.cookies
+    config.subtitle_style.fonts_dir = resolved(config.subtitle_style.fonts_dir)
+    return config
 
 
 def save_youtube_auth_config(
