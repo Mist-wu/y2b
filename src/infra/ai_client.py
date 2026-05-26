@@ -211,14 +211,14 @@ class GeminiClient(OpenAICompatibleLLMClient):
     pass
 
 
-def create_llm_client(ai_cfg) -> BaseLLMClient:
+def create_llm_client(ai_cfg, logger=None) -> BaseLLMClient:
     provider = str(ai_cfg.provider).lower()
     if provider == "deepseek":
-        return DeepSeekClient(ai_cfg)
+        return DeepSeekClient(ai_cfg, logger=logger)
     if provider == "openai":
-        return OpenAIClient(ai_cfg)
+        return OpenAIClient(ai_cfg, logger=logger)
     if provider == "gemini":
-        return GeminiClient(ai_cfg)
+        return GeminiClient(ai_cfg, logger=logger)
     raise RuntimeError(f"不支持的 LLM provider: {ai_cfg.provider}")
 
 
@@ -376,8 +376,8 @@ def _coerce_translation_result(data: Any, *, expected_count: int) -> list[str]:
 
 
 # Backward-compatible functional API.
-def translate_title(text: str, ai_cfg, translation_cfg) -> str:
-    client = create_llm_client(ai_cfg)
+def translate_title(text: str, ai_cfg, translation_cfg, *, logger=None) -> str:
+    client = create_llm_client(ai_cfg, logger=logger)
     return client.translate_text(
         text,
         system_prompt=build_title_prompt(
@@ -389,9 +389,9 @@ def translate_title(text: str, ai_cfg, translation_cfg) -> str:
     )
 
 
-def segment_subtitle_ranges(lines: list[str], *, ai_cfg, source_lang: str = "en") -> list[dict[str, int]]:
+def segment_subtitle_ranges(lines: list[str], *, ai_cfg, source_lang: str = "en", logger=None) -> list[dict[str, int]]:
     payload = json.dumps({"tokens": [{"i": i, "t": text} for i, text in enumerate(lines)]}, ensure_ascii=False)
-    return create_llm_client(ai_cfg).segment_ranges(
+    return create_llm_client(ai_cfg, logger=logger).segment_ranges(
         lines,
         system_prompt=build_segment_prompt(source_lang),
         source_lang=source_lang,
@@ -406,8 +406,9 @@ def suggest_bilibili_metadata(
     tid_whitelist: dict[int, str],
     tag_min_count: int = 1,
     tag_max_count: int = 4,
+    logger=None,
 ) -> dict[str, Any]:
-    data = create_llm_client(ai_cfg).complete_json(
+    data = create_llm_client(ai_cfg, logger=logger).complete_json(
         payload,
         system_prompt=build_bilibili_metadata_prompt(tid_whitelist, tag_min_count, tag_max_count),
         max_tokens=1024,
@@ -424,9 +425,10 @@ def translate_subtitle_lines(
     translation_cfg,
     source_lang: str = "en",
     target_lang: str = "zh-CN",
+    logger=None,
 ) -> list[str]:
     payload = json.dumps({"items": [{"i": i, "text": text} for i, text in enumerate(lines)]}, ensure_ascii=False)
-    parsed = create_llm_client(ai_cfg).translate_batch(
+    parsed = create_llm_client(ai_cfg, logger=logger).translate_batch(
         lines,
         system_prompt=build_subtitle_translation_prompt(translation_cfg, source_lang, target_lang),
         max_tokens=max(4096, min(16000, len(payload) * 3 + 2048)),

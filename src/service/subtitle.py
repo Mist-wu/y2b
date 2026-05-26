@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 import re
 import unicodedata
@@ -33,6 +34,24 @@ class SubtitleService:
             return self._parse_srt(path)
         return self._parse_vtt(path)
 
+    def save_cues(self, cues: list[SubtitleCue], path: str | Path) -> Path:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps([cue.__dict__ for cue in cues], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return output
+
+    def load_cues(self, path: str | Path) -> list[SubtitleCue]:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raise RuntimeError("字幕缓存格式无效")
+        cues = [SubtitleCue(**item) for item in raw if isinstance(item, dict)]
+        if len(cues) != len(raw) or not cues:
+            raise RuntimeError("字幕缓存为空或包含无效条目")
+        return cues
+
     def translate_cues(
         self,
         cues: list[SubtitleCue],
@@ -40,25 +59,59 @@ class SubtitleService:
         source_lang: str,
         target_lang: str,
     ) -> list[SubtitleCue]:
-        cues = self._segment_cues_with_deepseek(cues, source_lang=source_lang)
+        cues = self.segment_cues(cues, source_lang=source_lang)
+        return self.translate_segmented_cues(cues, source_lang=source_lang, target_lang=target_lang)
+
+    def segment_cues(self, cues: list[SubtitleCue], *, source_lang: str) -> list[SubtitleCue]:
+        return self._segment_cues_with_deepseek(cues, source_lang=source_lang)
+
+    def translate_segmented_cues(
+        self,
+        cues: list[SubtitleCue],
+        *,
+        source_lang: str,
+        target_lang: str,
+    ) -> list[SubtitleCue]:
         batch_size = max(1, int(self.config.translation.subtitle_batch_size))
+        concurrency = int(self.config.translation.subtitle_concurrency)
+        batches = [cues[i : i + batch_size] for i in range(0, len(cues), batch_size)]
         translated_total = 0
-        for i in range(0, len(cues), batch_size):
-            batch = cues[i : i + batch_size]
-            lines = [cue.text for cue in batch]
-            if self.logger:
-                self.logger.info(f"翻译字幕批次 {i // batch_size + 1}: {len(lines)} 条")
-            translations = self._translate_lines_resilient(
-                lines,
-                source_lang=source_lang,
-                target_lang=target_lang,
-            )
+        if concurrency <= 1 or len(batches) <= 1:
+            translated_batches = [
+                self._translate_one_batch(i, batch, source_lang=source_lang, target_lang=target_lang)
+                for i, batch in enumerate(batches)
+            ]
+        else:
+            with ThreadPoolExecutor(max_workers=min(concurrency, len(batches))) as pool:
+                futures = [
+                    pool.submit(self._translate_one_batch, i, batch, source_lang=source_lang, target_lang=target_lang)
+                    for i, batch in enumerate(batches)
+                ]
+                translated_batches = [future.result() for future in futures]
+        for batch, translations in zip(batches, translated_batches, strict=True):
             for cue, text in zip(batch, translations, strict=True):
                 cue.translation = text
                 translated_total += 1
         if self.logger:
             self.logger.info(f"字幕翻译完成，共 {translated_total} 条")
         return cues
+
+    def _translate_one_batch(
+        self,
+        batch_index: int,
+        batch: list[SubtitleCue],
+        *,
+        source_lang: str,
+        target_lang: str,
+    ) -> list[str]:
+        lines = [cue.text for cue in batch]
+        if self.logger:
+            self.logger.info(f"翻译字幕批次 {batch_index + 1}: {len(lines)} 条")
+        return self._translate_lines_resilient(
+            lines,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        )
 
     def write_bilingual_ass(
         self,
@@ -140,10 +193,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if len(cn_parts) <= 1:
             return [cue]
 
+        min_part_duration = 0.35
+        duration = cue.end - cue.start
+        if duration < len(cn_parts) * min_part_duration:
+            if self.logger:
+                self.logger.warning("中文字幕过长但显示时间不足，保留完整单条字幕以避免内容丢失。")
+            return [cue]
+
         en_parts = self._split_text_for_parallel_cues(cue.text, len(cn_parts))
         weights = [max(1, self._display_width(part)) for part in cn_parts]
         total_weight = sum(weights)
-        duration = cue.end - cue.start
         result: list[SubtitleCue] = []
         current_start = cue.start
         for index, (cn_part, weight) in enumerate(zip(cn_parts, weights, strict=True)):
@@ -151,7 +210,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 current_end = cue.end
             else:
                 current_end = current_start + duration * weight / total_weight
-                current_end = min(cue.end, max(current_start + 0.35, current_end))
+                current_end = min(cue.end, max(current_start + min_part_duration, current_end))
             result.append(
                 SubtitleCue(
                     start=current_start,

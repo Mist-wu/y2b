@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from src.config.config import load_config
 from src.infra.ai_client import _coerce_translation_result, _parse_json_value, build_subtitle_translation_prompt
@@ -316,3 +317,46 @@ def test_split_cue_for_single_line_cn_splits_translation_and_timing():
     assert split[-1].end == 4.0
     assert all("\n" not in item.translation for item in split if item.translation)
     assert all(svc._display_width(item.translation or "") <= 28 for item in split)
+
+
+def test_split_cue_for_short_duration_preserves_long_translation():
+    svc = service()
+    translation = "这是一个非常非常长的中文字幕内容用于验证短时间字幕被拆分之后不会丢失尾部文字并影响准确性"
+    cue = SubtitleCue(0.0, 1.0, "short english caption", translation)
+
+    split = svc._split_cue_for_single_line_cn(cue, max_chars=12)
+
+    assert split == [cue]
+    assert "".join(item.translation or "" for item in split) == translation
+
+
+def test_subtitle_cache_round_trip(tmp_path: Path):
+    svc = service()
+    path = tmp_path / "translated.json"
+    cues = [SubtitleCue(0.0, 1.0, "Hello", "你好")]
+
+    svc.save_cues(cues, path)
+
+    assert svc.load_cues(path) == cues
+
+
+def test_concurrent_translation_preserves_cue_order():
+    completed: list[str] = []
+
+    class ParallelTranslator:
+        def translate_subtitle_batch(self, lines, *, source_lang: str, target_lang: str):
+            if lines[0] == "first":
+                time.sleep(0.02)
+            completed.append(lines[0])
+            return [f"translated-{lines[0]}"]
+
+    config = load_config()
+    config.translation.subtitle_batch_size = 1
+    config.translation.subtitle_concurrency = 2
+    svc = SubtitleService(config, ParallelTranslator())
+    cues = [SubtitleCue(0.0, 1.0, "first"), SubtitleCue(1.0, 2.0, "second")]
+
+    translated = svc.translate_segmented_cues(cues, source_lang="en", target_lang="zh-CN")
+
+    assert completed == ["second", "first"]
+    assert [cue.translation for cue in translated] == ["translated-first", "translated-second"]
