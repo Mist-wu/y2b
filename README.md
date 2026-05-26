@@ -1,166 +1,122 @@
 # y2b
 
-YouTube 单视频字幕翻译、硬字幕压制并上传到 Bilibili 的 Python CLI 工具。
+将单个 YouTube 视频翻译为中英双语硬字幕视频，并可上传到 Bilibili 的 Python CLI。
 
-## 功能
+## 流程
 
-- 配置 YouTube cookies
-- 调用 `biliup` 登录 Bilibili
-- 检查 `yt-dlp` / `ffmpeg` / `biliup` / DeepSeek API
-- 传入单个 YouTube 视频链接自动处理：
-  - 下载视频
-  - 下载英文字幕
-  - 使用 DeepSeek v4 flash 翻译为中文字幕
-  - 生成底部双语 ASS 字幕（中文大字在上，英文小字在下）
-  - 使用 ffmpeg 硬字幕压制
-  - 上传到 Bilibili
-- 使用 SQLite 记录任务，可查看进度和日志
+1. 校验认证并获取视频信息。
+2. 先下载并确认英文字幕，再下载视频。
+3. 使用 DeepSeek v4 flash 非思考模式智能分句与翻译。
+4. 生成中文在上、英文在下的双语 ASS，并用 ffmpeg 压制。
+5. 可选生成投稿信息并通过 `biliup` 上传。
 
-> 原频道监控能力已移除。本项目现在只处理用户显式传入的单个 YouTube 视频链接。
+本项目不包含频道监控或定时抓取功能。
 
-## 安装
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
-```
-
-或使用 uv：
+## 安装与配置
 
 ```bash
 uv sync
 ```
 
-系统需要安装：
-
-- ffmpeg / ffprobe
-- 可访问 YouTube、Bilibili、DeepSeek API 的网络环境
-
-## 配置 DeepSeek
+系统需可用 `ffmpeg` / `ffprobe`，并可访问 YouTube、Bilibili 和 DeepSeek API。运行期间不会自动安装工具。
 
 在项目根目录创建 `.env`：
 
 ```env
-DEEPSEEK_API_KEY=你的 DeepSeek API Key
+DEEPSEEK_API_KEY=你的_API_Key
 ```
 
-默认使用 DeepSeek v4 flash 非思考模式：
+默认配置位于 `src/config/config.yaml`：
 
-```yaml
-ai:
-  provider: deepseek
-  model: deepseek-v4-flash
-  reasoning: false
-```
+- 翻译：`en` -> `zh-CN`，`deepseek-v4-flash`，`reasoning: false`
+- 认证：YouTube 默认 `cookies_from_browser: chrome`
+- 压制：默认 `quality`；`fast` 使用 macOS `h264_videotoolbox`
+- 路径：相对路径基于项目根目录；可通过 `Y2B_HOME=/path/to/runtime` 指定数据目录
 
-## 登录
-
-### YouTube
-
-交互式：
+## 登录与检查
 
 ```bash
-y2b login youtube
+uv run y2b login youtube --browser chrome
+uv run y2b login bilibili
+uv run y2b check
+uv run y2b check --probe-url "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-导入 cookies 文件：
+YouTube 也可导入 Netscape cookies 文件：
 
 ```bash
-y2b login youtube --cookies-file ./www.youtube.com_cookies.txt
+uv run y2b login youtube --cookies-file ./youtube_cookies.txt
 ```
 
-使用浏览器 cookies：
+## 使用
+
+翻译、压制并上传：
 
 ```bash
-y2b login youtube --browser chrome
+uv run y2b translate "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-### Bilibili
+只生成视频，不上传：
 
 ```bash
-y2b login bilibili
+uv run y2b translate "<url>" --no-upload --keep-files
 ```
 
-## 检查环境
+快速硬件压制：
 
 ```bash
-y2b check
+uv run y2b translate "<url>" --no-upload --keep-files --render-profile fast
 ```
 
-可对指定视频做 YouTube 访问探针：
+上传参数：
 
 ```bash
-y2b check --probe-url "https://www.youtube.com/watch?v=xxxx"
+uv run y2b translate "<url>" --tag 翻译 --tag YouTube --tid 36
 ```
 
-## 处理单个视频
+未传 `--tag` / `--tid` 时，程序会尝试 AI 推荐并回退到非空 `bilibili.default_tags`。`repost` 是 `translate` 的别名。
+
+## 恢复任务
 
 ```bash
-y2b translate "https://www.youtube.com/watch?v=xxxx"
+uv run y2b jobs
+uv run y2b jobs --mark-interrupted
+uv run y2b translate "<url>" --resume-job <job_id> --no-upload --keep-files
 ```
 
-常用参数：
+- `--no-upload` 不请求投稿标题或标签。
+- 分句与翻译阶段分别保存缓存；翻译批次支持 `translation.subtitle_concurrency` 并发。
+- 恢复时可复用字幕、视频和翻译缓存；成片仅在 ASS、输入视频与编码 profile 清单一致时复用。
+
+任务详情与日志：
 
 ```bash
-y2b translate <url> \
-  --source-lang en \
-  --target-lang zh-CN \
-  --tag 荒野乱斗 \
-  --tag 游戏 \
-  --tid 4
+uv run y2b status <job_id>
+uv run y2b logs -f
 ```
 
-未显式传 `--tag` / `--tid` 时，上传前会让 DeepSeek 自动推荐 1-4 个标签，并从白名单分区中选择一个分区；当前白名单为 `知识(36)`、`游戏(4)`。命令行参数始终优先。
-
-`bilibili.upload.line` 默认保持为 `null`，由 `biliup` 使用默认上传线路；如需手动指定，必须使用当前 `biliup upload --help` 列出的合法线路值。
-
-Bilibili 创作声明可通过 `bilibili.upload` 配置：`copyright: 1` 表示自制，`2` 表示转载；`no_reprint: 0` 表示不勾选“未经作者允许，禁止转载”，`1` 表示勾选。
-
-只生成压制后视频，不上传：
-
-```bash
-y2b translate <url> --no-upload --keep-files
-```
-
-`repost` 是 `translate` 的别名：
-
-```bash
-y2b repost <url>
-```
-
-## 查看任务和日志
-
-```bash
-y2b jobs
-y2b status <job_id>
-y2b logs -f
-```
-
-## 配置文件
-
-主配置：
+## 输出
 
 ```text
-src/config/config.yaml
+downloads/<video_id>/<video_id>.bilingual.ass
+output/<video_id>.bilingual.mp4
 ```
 
-字幕样式可以在 `subtitle_style` 中调整。默认效果是底部双语字幕：中文更醒目、描边更清晰，英文更小用于对照；整体偏教学/游戏解说可读性，不追求纪录片重字幕风格。
+抽帧检查字幕：
 
-项目内置 `fonts/` 字体目录，默认使用：
-
-- 中文：Source Han Sans CN Medium
-- 英文：Inter SemiBold
-
-ffmpeg 压制时会通过 `ass` filter 的 `fontsdir` 加载该目录，减少跨平台字体缺失问题。
+```bash
+ffmpeg -y -ss 00:04:20 -i output/<video_id>.bilingual.mp4 -frames:v 1 -update 1 output/preview.jpg
+```
 
 ## Docker
 
+容器不能读取宿主机 Chrome cookies。先将 YouTube cookies 放到 `data/youtube_cookies.txt`，再执行：
+
 ```bash
 docker build -t y2b .
-docker run --rm -it \
-  --env-file .env \
+docker run --rm -it --env-file .env \
+  -e Y2B_YOUTUBE__COOKIES_FROM_BROWSER=null \
+  -e Y2B_YOUTUBE__COOKIES=/app/data/youtube_cookies.txt \
   -v "$PWD/data:/app/data" \
   -v "$PWD/downloads:/app/downloads" \
   -v "$PWD/output:/app/output" \
@@ -168,13 +124,10 @@ docker run --rm -it \
   y2b check
 ```
 
-处理视频示例：
+## 开发验证
 
 ```bash
-docker run --rm -it --env-file .env \
-  -v "$PWD/data:/app/data" \
-  -v "$PWD/downloads:/app/downloads" \
-  -v "$PWD/output:/app/output" \
-  -v "$PWD/logs:/app/logs" \
-  y2b translate "https://www.youtube.com/watch?v=xxxx" --no-upload --keep-files
+uv run python -m compileall src
+uv run pytest -q
+uv run y2b check
 ```
