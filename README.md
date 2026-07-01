@@ -62,6 +62,15 @@ uv run y2b translate "https://www.youtube.com/watch?v=VIDEO_ID"
 uv run y2b translate "<url>" --no-upload --keep-files
 ```
 
+按阶段执行，便于只做特定动作：
+
+```bash
+uv run y2b translate "<url>" --stop-after subtitle --keep-files     # 只下载原始字幕
+uv run y2b translate "<url>" --stop-after translation --keep-files  # 分句并翻译，输出翻译缓存 JSON
+uv run y2b translate "<url>" --stop-after ass --keep-files          # 生成双语 ASS，不压制/不上传
+uv run y2b translate "<url>" --stop-after render --keep-files       # 压制完成后停止
+```
+
 快速硬件压制：
 
 ```bash
@@ -84,7 +93,8 @@ uv run y2b jobs --mark-interrupted
 uv run y2b translate "<url>" --resume-job <job_id> --no-upload --keep-files
 ```
 
-- `--no-upload` 不请求投稿标题或标签。
+- `--no-upload` 不请求投稿标题或标签，等价于默认流程停在 `--stop-after render`。
+- `--stop-after ass` 会用 YouTube metadata 中的分辨率生成 ASS，不下载视频。
 - 分句与翻译阶段分别保存缓存；翻译批次支持 `translation.subtitle_concurrency` 并发。
 - 恢复时可复用字幕、视频和翻译缓存；成片仅在 ASS、输入视频与编码 profile 清单一致时复用。
 
