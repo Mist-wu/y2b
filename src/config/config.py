@@ -124,12 +124,7 @@ class GlobalConfig(StrictModel):
     max_retry: int = Field(default=3, ge=1)
 
 
-class AppConfig(StrictModel):
-    download_dir: str = "./downloads"
-    output_dir: str = "./output"
-    log_dir: str = "./logs"
-    state_db: str = "./data/state.db"
-    max_retry: int = Field(default=3, ge=1)
+class AppConfig(GlobalConfig):
     youtube: YouTubeConfig = Field(default_factory=YouTubeConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     translation: TranslationConfig = Field(default_factory=TranslationConfig)
