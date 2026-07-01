@@ -8,6 +8,25 @@ from typing import Any
 
 
 class StateRepository:
+    # Columns updatable via update_job(), used both for migration and to whitelist
+    # SQL identifiers so field names can never be attacker/caller controlled.
+    _COLUMNS: dict[str, str] = {
+        "video_id": "TEXT",
+        "url": "TEXT",
+        "title": "TEXT",
+        "translated_title": "TEXT",
+        "status": "TEXT",
+        "progress": "INTEGER DEFAULT 0",
+        "current_step": "TEXT",
+        "video_path": "TEXT",
+        "subtitle_path": "TEXT",
+        "rendered_path": "TEXT",
+        "bvid": "TEXT",
+        "error": "TEXT",
+        "created_at": "INTEGER",
+        "updated_at": "INTEGER",
+    }
+
     def __init__(self, db_path: str):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
@@ -41,23 +60,7 @@ class StateRepository:
 
     def _migrate_jobs_table(self):
         cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(jobs)").fetchall()}
-        additions: dict[str, str] = {
-            "video_id": "TEXT",
-            "url": "TEXT",
-            "title": "TEXT",
-            "translated_title": "TEXT",
-            "status": "TEXT",
-            "progress": "INTEGER DEFAULT 0",
-            "current_step": "TEXT",
-            "video_path": "TEXT",
-            "subtitle_path": "TEXT",
-            "rendered_path": "TEXT",
-            "bvid": "TEXT",
-            "error": "TEXT",
-            "created_at": "INTEGER",
-            "updated_at": "INTEGER",
-        }
-        for col, col_type in additions.items():
+        for col, col_type in self._COLUMNS.items():
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_type}")
         self.conn.commit()
@@ -94,6 +97,9 @@ class StateRepository:
     def update_job(self, job_id: str, **fields: Any) -> None:
         if not fields:
             return
+        unknown = set(fields) - self._COLUMNS.keys()
+        if unknown:
+            raise ValueError(f"未知任务字段: {', '.join(sorted(unknown))}")
         fields["updated_at"] = int(time.time())
         keys = list(fields.keys())
         sets = ", ".join(f"{k}=?" for k in keys)
