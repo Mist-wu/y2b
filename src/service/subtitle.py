@@ -82,9 +82,37 @@ class SubtitleService:
             for cue, text in zip(batch, translations, strict=True):
                 cue.translation = text
                 translated_total += 1
+        self._repair_missing_translations(cues, source_lang=source_lang, target_lang=target_lang)
         if self.logger:
             self.logger.info(f"字幕翻译完成，共 {translated_total} 条")
         return cues
+
+    def _repair_missing_translations(self, cues: list[SubtitleCue], *, source_lang: str, target_lang: str) -> None:
+        """Retry single lines that came back empty despite having real content.
+
+        Batch translation occasionally mislabels which JSON index a translation
+        belongs to, which surfaces as an unrelated cue going empty even though
+        it isn't a filler-only line. Re-translating just that line in isolation
+        is cheap and avoids silently dropping content from the final subtitles.
+        """
+        suspects = [cue for cue in cues if not (cue.translation or "").strip() and self._looks_translatable(cue.text)]
+        if not suspects:
+            return
+        if self.logger:
+            self.logger.warning(f"检测到 {len(suspects)} 条疑似翻译缺失/错位，正在逐条补译")
+        for cue in suspects:
+            try:
+                [fixed] = self._translate_lines_resilient([cue.text], source_lang=source_lang, target_lang=target_lang)
+                cue.translation = fixed
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"补译失败，保留空翻译: {cue.text!r}: {e}")
+
+    def _looks_translatable(self, text: str) -> bool:
+        words = re.findall(r"[A-Za-z']+", text.lower())
+        if not words:
+            return False
+        return not all(word in _FILLER_WORDS for word in words)
 
     def _translate_one_batch(
         self,

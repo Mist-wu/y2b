@@ -340,6 +340,50 @@ def test_subtitle_cache_round_trip(tmp_path: Path):
     assert svc.load_cues(path) == cues
 
 
+def test_repair_missing_translations_retries_substantive_empty_result():
+    calls: list[str] = []
+
+    class MisalignedTranslator:
+        def translate_subtitle_batch(self, lines, *, source_lang: str, target_lang: str):
+            calls.append(tuple(lines))
+            if len(lines) == 1:
+                # Single-line repair retry: translate correctly this time.
+                return [f"补译-{lines[0]}"]
+            # First batch call mislabels the second line as empty.
+            return ["第一句", ""]
+
+    svc = SubtitleService(load_config(), MisalignedTranslator())
+    cues = [
+        SubtitleCue(0.0, 1.0, "First real sentence."),
+        SubtitleCue(1.0, 2.0, "You tap it a second time to teleport."),
+    ]
+
+    translated = svc.translate_segmented_cues(cues, source_lang="en", target_lang="zh-CN")
+
+    assert [cue.translation for cue in translated] == [
+        "第一句",
+        "补译-You tap it a second time to teleport.",
+    ]
+    assert calls[-1] == ("You tap it a second time to teleport.",)
+
+
+def test_repair_missing_translations_leaves_pure_filler_empty():
+    calls: list[str] = []
+
+    class FillerTranslator:
+        def translate_subtitle_batch(self, lines, *, source_lang: str, target_lang: str):
+            calls.append(tuple(lines))
+            return [""]
+
+    svc = SubtitleService(load_config(), FillerTranslator())
+    cues = [SubtitleCue(0.0, 1.0, "Um")]
+
+    translated = svc.translate_segmented_cues(cues, source_lang="en", target_lang="zh-CN")
+
+    assert translated[0].translation == ""
+    assert len(calls) == 1  # No retry for filler-only content.
+
+
 def test_concurrent_translation_preserves_cue_order():
     completed: list[str] = []
 
