@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.bootstrap import ensure_bilibili_ready, ensure_pipeline_tools, ensure_youtube_ready
@@ -12,6 +13,19 @@ from src.service.renderer import RenderService
 from src.service.subtitle import SubtitleService
 from src.service.translator import TranslatorService
 from src.service.uploader import UploaderService
+
+
+@dataclass
+class RunContext:
+    """Shared, read-only state threaded through every pipeline stage for one job run."""
+
+    job_id: str
+    video_id: str
+    webpage_url: str
+    original_title: str
+    meta: dict
+    work_dir: Path
+    output_dir: Path
 
 
 class SingleVideoPipeline:
@@ -77,23 +91,21 @@ class SingleVideoPipeline:
                 ensure_bilibili_ready(self.config)
 
             meta = self._fetch_metadata_stage(job_id, url)
-            video_id = str(meta["video_id"])
-            webpage_url = str(meta["webpage_url"])
-            original_title = str(meta["title"])
-
-            work_dir = Path(self.config.download_dir) / video_id
+            work_dir = Path(self.config.download_dir) / str(meta["video_id"])
             work_dir.mkdir(parents=True, exist_ok=True)
             output_dir = Path(self.config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-
-            raw_subtitle = self._download_subtitle_stage(
-                job_id,
-                webpage_url,
-                work_dir,
-                video_id=video_id,
-                source_lang=source_lang,
-                resume=resume,
+            ctx = RunContext(
+                job_id=job_id,
+                video_id=str(meta["video_id"]),
+                webpage_url=str(meta["webpage_url"]),
+                original_title=str(meta["title"]),
+                meta=meta,
+                work_dir=work_dir,
+                output_dir=output_dir,
             )
+
+            raw_subtitle = self._download_subtitle_stage(ctx, source_lang=source_lang, resume=resume)
             if target_stage == "subtitle":
                 cleanup_preserve_suffixes = {raw_subtitle.suffix}
                 record = self._complete_job(
@@ -112,19 +124,11 @@ class SingleVideoPipeline:
 
             downloaded_video: Path | None = None
             if self._reaches_stage(target_stage, "render"):
-                downloaded_video = self._download_video_stage(
-                    job_id,
-                    webpage_url,
-                    work_dir,
-                    video_id=video_id,
-                    resume=resume,
-                )
+                downloaded_video = self._download_video_stage(ctx, resume=resume)
 
             cues, translated_cache_path = self._translate_subtitle_stage(
-                job_id,
+                ctx,
                 cues,
-                work_dir,
-                video_id=video_id,
                 source_lang=source_lang,
                 target_lang=target_lang,
                 resume=resume,
@@ -142,11 +146,8 @@ class SingleVideoPipeline:
                 return record
 
             ass_path = self._write_ass_stage(
-                job_id,
+                ctx,
                 cues,
-                work_dir,
-                video_id=video_id,
-                meta=meta,
                 downloaded_video=downloaded_video,
                 reaches_render=self._reaches_stage(target_stage, "render"),
             )
@@ -165,11 +166,9 @@ class SingleVideoPipeline:
             if downloaded_video is None:
                 raise RuntimeError("内部错误：压制阶段缺少输入视频")
             rendered_path = self._render_stage(
-                job_id,
+                ctx,
                 ass_path,
                 downloaded_video,
-                output_dir,
-                video_id=video_id,
                 render_profile=render_profile,
                 resume=resume,
             )
@@ -187,13 +186,8 @@ class SingleVideoPipeline:
                 return record
 
             self._upload_stage(
-                job_id,
+                ctx,
                 rendered_path,
-                meta=meta,
-                video_id=video_id,
-                webpage_url=webpage_url,
-                original_title=original_title,
-                work_dir=work_dir,
                 cues=cues,
                 title_override=title_override,
                 tags=tags,
@@ -237,64 +231,47 @@ class SingleVideoPipeline:
         self.state.update_job(job_id, video_id=video_id, title=original_title)
         return {**meta, "video_id": video_id, "webpage_url": webpage_url, "title": original_title}
 
-    def _download_subtitle_stage(
-        self,
-        job_id: str,
-        webpage_url: str,
-        work_dir: Path,
-        *,
-        video_id: str,
-        source_lang: str,
-        resume: bool,
-    ) -> Path:
-        self._step(job_id, "downloading_subtitle", 20, f"下载 {source_lang} 字幕")
-        raw_subtitle = self._find_existing_subtitle(work_dir, video_id, source_lang) if resume else None
+    def _download_subtitle_stage(self, ctx: RunContext, *, source_lang: str, resume: bool) -> Path:
+        self._step(ctx.job_id, "downloading_subtitle", 20, f"下载 {source_lang} 字幕")
+        raw_subtitle = self._find_existing_subtitle(ctx.work_dir, ctx.video_id, source_lang) if resume else None
         if raw_subtitle:
             self.logger.info(f"恢复任务：复用字幕文件 {raw_subtitle}")
         else:
             raw_subtitle = self.downloader.download_subtitle(
-                webpage_url,
-                work_dir,
-                video_id=video_id,
+                ctx.webpage_url,
+                ctx.work_dir,
+                video_id=ctx.video_id,
                 source_lang=source_lang,
                 logger=self.logger,
             )
-        self.state.update_job(job_id, subtitle_path=str(raw_subtitle))
+        self.state.update_job(ctx.job_id, subtitle_path=str(raw_subtitle))
         return raw_subtitle
 
-    def _download_video_stage(
-        self,
-        job_id: str,
-        webpage_url: str,
-        work_dir: Path,
-        *,
-        video_id: str,
-        resume: bool,
-    ) -> Path:
-        self._step(job_id, "downloading_video", 35, "下载 YouTube 视频")
-        expected_video = work_dir / f"{video_id}.mp4"
+    def _download_video_stage(self, ctx: RunContext, *, resume: bool) -> Path:
+        self._step(ctx.job_id, "downloading_video", 35, "下载 YouTube 视频")
+        expected_video = ctx.work_dir / f"{ctx.video_id}.mp4"
         if resume and self._can_reuse_video(expected_video):
             downloaded_video = expected_video
             self.logger.info(f"恢复任务：复用视频文件 {downloaded_video}")
         else:
-            downloaded_video = self.downloader.download_url(webpage_url, work_dir, video_id=video_id, logger=self.logger)
-        self.state.update_job(job_id, video_path=str(downloaded_video))
+            downloaded_video = self.downloader.download_url(
+                ctx.webpage_url, ctx.work_dir, video_id=ctx.video_id, logger=self.logger
+            )
+        self.state.update_job(ctx.job_id, video_path=str(downloaded_video))
         return downloaded_video
 
     def _translate_subtitle_stage(
         self,
-        job_id: str,
+        ctx: RunContext,
         cues: list,
-        work_dir: Path,
         *,
-        video_id: str,
         source_lang: str,
         target_lang: str,
         resume: bool,
     ) -> tuple[list, Path]:
-        self._step(job_id, "translating_subtitle", 50, f"字幕 {source_lang} -> {target_lang}")
-        segmented_cache_path = self._segmented_cache_path(work_dir, video_id, source_lang)
-        cache_path = self._translated_cache_path(work_dir, video_id, source_lang, target_lang)
+        self._step(ctx.job_id, "translating_subtitle", 50, f"字幕 {source_lang} -> {target_lang}")
+        segmented_cache_path = self._segmented_cache_path(ctx.work_dir, ctx.video_id, source_lang)
+        cache_path = self._translated_cache_path(ctx.work_dir, ctx.video_id, source_lang, target_lang)
         if resume and cache_path.exists():
             try:
                 cues = self.subtitle.load_cues(cache_path)
@@ -312,39 +289,34 @@ class SingleVideoPipeline:
 
     def _write_ass_stage(
         self,
-        job_id: str,
+        ctx: RunContext,
         cues: list,
-        work_dir: Path,
         *,
-        video_id: str,
-        meta: dict,
         downloaded_video: Path | None,
         reaches_render: bool,
     ) -> Path:
         step = "生成双语 ASS 字幕并压制" if reaches_render else "生成双语 ASS 字幕"
-        self._step(job_id, "rendering_subtitle", 70, step)
-        ass_path = work_dir / f"{video_id}.bilingual.ass"
+        self._step(ctx.job_id, "rendering_subtitle", 70, step)
+        ass_path = ctx.work_dir / f"{ctx.video_id}.bilingual.ass"
         if downloaded_video is not None:
             width, height = self.renderer.get_resolution(downloaded_video)
         else:
-            width, height = self._metadata_resolution(meta)
+            width, height = self._metadata_resolution(ctx.meta)
         self.subtitle.write_bilingual_ass(cues, ass_path, width=width, height=height)
-        self.state.update_job(job_id, subtitle_path=str(ass_path))
+        self.state.update_job(ctx.job_id, subtitle_path=str(ass_path))
         return ass_path
 
     def _render_stage(
         self,
-        job_id: str,
+        ctx: RunContext,
         ass_path: Path,
         downloaded_video: Path,
-        output_dir: Path,
         *,
-        video_id: str,
         render_profile: str | None,
         resume: bool,
     ) -> Path:
-        rendered_path = output_dir / f"{video_id}.bilingual.mp4"
-        render_manifest_path = output_dir / f"{video_id}.bilingual.render.json"
+        rendered_path = ctx.output_dir / f"{ctx.video_id}.bilingual.mp4"
+        render_manifest_path = ctx.output_dir / f"{ctx.video_id}.bilingual.render.json"
         render_profile_name = render_profile or self.config.render.profile
         if resume and self._can_reuse_rendered_output(
             rendered_path,
@@ -362,49 +334,48 @@ class SingleVideoPipeline:
                 profile=render_profile,
             )
             self._write_render_manifest(render_manifest_path, ass_path, downloaded_video, render_profile_name)
-        self.state.update_job(job_id, subtitle_path=str(ass_path), rendered_path=str(rendered_path))
+        self.state.update_job(ctx.job_id, subtitle_path=str(ass_path), rendered_path=str(rendered_path))
         return rendered_path
 
     def _upload_stage(
         self,
-        job_id: str,
+        ctx: RunContext,
         rendered_path: Path,
         *,
-        meta: dict,
-        video_id: str,
-        webpage_url: str,
-        original_title: str,
-        work_dir: Path,
         cues: list,
         title_override: str | None,
         tags: list[str] | None,
         tid: int | None,
     ) -> None:
-        self._step(job_id, "translating_title", 82, "生成 Bilibili 标题")
-        final_title = title_override or self.translator.translate_title(original_title, self.config.bilibili.title_prefix)
-        self.state.update_job(job_id, translated_title=final_title)
-        self._step(job_id, "uploading", 88, "上传到 Bilibili")
+        self._step(ctx.job_id, "translating_title", 82, "生成 Bilibili 标题")
+        final_title = title_override or self.translator.translate_title(
+            ctx.original_title, self.config.bilibili.title_prefix
+        )
+        self.state.update_job(ctx.job_id, translated_title=final_title)
+        self._step(ctx.job_id, "uploading", 88, "上传到 Bilibili")
         cover_path: Path | None = None
         try:
-            cover_path = self.downloader.download_thumbnail(meta, work_dir, video_id=video_id, logger=self.logger)
+            cover_path = self.downloader.download_thumbnail(
+                ctx.meta, ctx.work_dir, video_id=ctx.video_id, logger=self.logger
+            )
         except Exception as e:
             self.logger.warning(f"下载 YouTube 封面失败，将使用 Bilibili 默认封面: {e}")
         upload_video = {
-            "id": video_id,
-            "title": original_title,
-            "webpage_url": webpage_url,
-            "channel": meta.get("channel"),
-            "uploader": meta.get("uploader"),
-            "channel_id": meta.get("channel_id"),
-            "description": meta.get("description"),
-            "upload_date": meta.get("upload_date"),
-            "timestamp": meta.get("timestamp"),
+            "id": ctx.video_id,
+            "title": ctx.original_title,
+            "webpage_url": ctx.webpage_url,
+            "channel": ctx.meta.get("channel"),
+            "uploader": ctx.meta.get("uploader"),
+            "channel_id": ctx.meta.get("channel_id"),
+            "description": ctx.meta.get("description"),
+            "upload_date": ctx.meta.get("upload_date"),
+            "timestamp": ctx.meta.get("timestamp"),
         }
         final_tags, final_tid = self._resolve_upload_metadata(
-            original_title=original_title,
+            original_title=ctx.original_title,
             final_title=final_title,
-            webpage_url=webpage_url,
-            meta=meta,
+            webpage_url=ctx.webpage_url,
+            meta=ctx.meta,
             cues=cues,
             tags=tags,
             tid=tid,
@@ -417,7 +388,7 @@ class SingleVideoPipeline:
             tid=final_tid,
             cover_path=cover_path,
         )
-        self.state.update_job(job_id, status="uploaded", progress=100, current_step="上传完成", bvid=bvid)
+        self.state.update_job(ctx.job_id, status="uploaded", progress=100, current_step="上传完成", bvid=bvid)
 
     def _complete_job(self, job_id: str, *, current_step: str, **fields) -> dict:
         self.state.update_job(job_id, status="completed", progress=100, current_step=current_step, **fields)

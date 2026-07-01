@@ -234,6 +234,36 @@ def test_no_upload_cannot_target_upload(tmp_path, monkeypatch):
     repo.close()
 
 
+def test_metadata_resolution_prefers_direct_dimensions(tmp_path, monkeypatch):
+    pipe, repo, _job_id, _work_dir = pipeline(tmp_path, monkeypatch, [])
+
+    assert pipe._metadata_resolution({"width": 1280, "height": 720}) == (1280, 720)
+    repo.close()
+
+
+def test_metadata_resolution_picks_largest_video_format(tmp_path, monkeypatch):
+    pipe, repo, _job_id, _work_dir = pipeline(tmp_path, monkeypatch, [])
+
+    meta = {
+        "formats": [
+            {"vcodec": "none", "width": 3840, "height": 2160},
+            {"vcodec": "avc1", "width": 640, "height": 360},
+            {"vcodec": "avc1", "width": 1920, "height": 1080},
+        ]
+    }
+
+    assert pipe._metadata_resolution(meta) == (1920, 1080)
+    repo.close()
+
+
+def test_metadata_resolution_falls_back_to_1080p(tmp_path, monkeypatch):
+    pipe, repo, _job_id, _work_dir = pipeline(tmp_path, monkeypatch, [])
+
+    assert pipe._metadata_resolution({}) == (1920, 1080)
+    assert pipe._metadata_resolution({"formats": [{"vcodec": "avc1"}]}) == (1920, 1080)
+    repo.close()
+
+
 def test_resume_continues_from_segmented_cache(tmp_path, monkeypatch):
     calls = []
     pipe, repo, job_id, work_dir = pipeline(tmp_path, monkeypatch, calls)
