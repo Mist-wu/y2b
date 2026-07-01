@@ -94,8 +94,17 @@ class FakeRenderer:
         Path(output_video).write_bytes(b"rendered")
 
 
+class FakeUploader:
+    def __init__(self, calls: list[str]):
+        self.calls = calls
+
+    def upload(self, *_args, **_kwargs):
+        self.calls.append("upload")
+        return "BV123"
+
+
 def pipeline(tmp_path, monkeypatch, calls, *, subtitle_ok=True):
-    monkeypatch.setattr("src.service.pipeline.ensure_runtime_tools", lambda *_args: None)
+    monkeypatch.setattr("src.service.pipeline.ensure_pipeline_tools", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("src.service.pipeline.ensure_youtube_ready", lambda *_args: None)
     monkeypatch.setattr("src.service.pipeline.ensure_bilibili_ready", lambda *_args: None)
     cfg = load_config()
@@ -109,6 +118,7 @@ def pipeline(tmp_path, monkeypatch, calls, *, subtitle_ok=True):
     pipe.subtitle = FakeSubtitle(calls)
     pipe.translator = FakeTranslator(calls)
     pipe.renderer = FakeRenderer(calls)
+    pipe.uploader = FakeUploader(calls)
     return pipe, repo, job_id, work_dir
 
 
@@ -120,6 +130,20 @@ def test_pipeline_checks_subtitle_before_downloading_video(tmp_path, monkeypatch
         pipe.run("https://youtu.be/video1", job_id=job_id, no_upload=True)
 
     assert calls == ["metadata", "subtitle"]
+    repo.close()
+
+
+def test_default_pipeline_still_renders_and_uploads(tmp_path, monkeypatch):
+    calls = []
+    pipe, repo, job_id, _work_dir = pipeline(tmp_path, monkeypatch, calls)
+
+    record = pipe.run("https://youtu.be/video1", job_id=job_id, keep_files=True)
+
+    assert record["status"] == "uploaded"
+    assert record["bvid"] == "BV123"
+    assert "render:None" in calls
+    assert "title" in calls
+    assert "upload" in calls
     repo.close()
 
 
@@ -158,6 +182,55 @@ def test_resume_reuses_valid_stage_outputs(tmp_path, monkeypatch):
     pipe.run("https://youtu.be/video1", job_id=job_id, no_upload=True, resume=True, keep_files=True)
 
     assert calls == ["metadata", "load_cache", "ass"]
+    repo.close()
+
+
+def test_stop_after_ass_skips_video_render_and_upload(tmp_path, monkeypatch):
+    calls = []
+    pipe, repo, job_id, _work_dir = pipeline(tmp_path, monkeypatch, calls)
+
+    record = pipe.run("https://youtu.be/video1", job_id=job_id, keep_files=True, stop_after="ass")
+
+    assert record["status"] == "completed"
+    assert record["rendered_path"] is None
+    assert Path(record["subtitle_path"]).name == "video1.bilingual.ass"
+    assert calls == ["metadata", "subtitle", "segment", "translate_subtitle", "ass"]
+    repo.close()
+
+
+def test_stop_after_translation_skips_video_and_ass(tmp_path, monkeypatch):
+    calls = []
+    pipe, repo, job_id, _work_dir = pipeline(tmp_path, monkeypatch, calls)
+
+    record = pipe.run("https://youtu.be/video1", job_id=job_id, keep_files=True, stop_after="translation")
+
+    assert record["status"] == "completed"
+    assert record["subtitle_path"].endswith("video1.en-zh-CN.translated.json")
+    assert record["rendered_path"] is None
+    assert calls == ["metadata", "subtitle", "segment", "translate_subtitle"]
+    repo.close()
+
+
+def test_stop_after_subtitle_skips_parsing_and_translation(tmp_path, monkeypatch):
+    calls = []
+    pipe, repo, job_id, _work_dir = pipeline(tmp_path, monkeypatch, calls)
+
+    record = pipe.run("https://youtu.be/video1", job_id=job_id, keep_files=True, stop_after="subtitle")
+
+    assert record["status"] == "completed"
+    assert record["subtitle_path"].endswith("video1.en.vtt")
+    assert record["rendered_path"] is None
+    assert calls == ["metadata", "subtitle"]
+    repo.close()
+
+
+def test_no_upload_cannot_target_upload(tmp_path, monkeypatch):
+    calls = []
+    pipe, repo, job_id, _work_dir = pipeline(tmp_path, monkeypatch, calls)
+
+    with pytest.raises(RuntimeError, match="--no-upload"):
+        pipe.run("https://youtu.be/video1", job_id=job_id, no_upload=True, stop_after="upload")
+
     repo.close()
 
 

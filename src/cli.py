@@ -91,6 +91,11 @@ def add_translate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--keep-files", action="store_true", help="保留下载和中间文件")
     parser.add_argument("--resume-job", help="恢复已有任务 ID，并复用校验通过的阶段产物")
     parser.add_argument("--render-profile", choices=("quality", "fast"), help="压制配置：quality 或 fast")
+    parser.add_argument(
+        "--stop-after",
+        choices=("subtitle", "translation", "ass", "render", "upload"),
+        help="执行到指定阶段即停止：subtitle/translation/ass/render/upload；默认保持原完整流程",
+    )
 
 
 def cmd_login_youtube(args) -> int:
@@ -209,6 +214,7 @@ def cmd_translate(args) -> int:
                 keep_files=args.keep_files,
                 resume=bool(args.resume_job),
                 render_profile=args.render_profile,
+                stop_after=args.stop_after,
             )
         print_job_detail(record)
         return 0

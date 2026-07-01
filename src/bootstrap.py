@@ -19,9 +19,14 @@ class CheckResult:
 
 
 def ensure_runtime_tools(config, logger=None) -> None:
+    ensure_pipeline_tools(config, logger=logger, needs_render=True, needs_upload=True)
+
+
+def ensure_pipeline_tools(config, logger=None, *, needs_render: bool, needs_upload: bool) -> None:
     _ensure_tool("yt-dlp", logger)
-    _ensure_tool(config.bilibili.executable, logger)
-    if not cli_exists("ffmpeg") or not cli_exists("ffprobe"):
+    if needs_upload:
+        _ensure_tool(config.bilibili.executable, logger)
+    if needs_render and (not cli_exists("ffmpeg") or not cli_exists("ffprobe")):
         raise RuntimeError("未检测到 ffmpeg/ffprobe，请先安装 ffmpeg。")
 
 
