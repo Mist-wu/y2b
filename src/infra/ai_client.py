@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 from abc import ABC, abstractmethod
@@ -177,7 +178,8 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                     raise LLMFatalError(message, status_code=status_code) from e
                 if attempt >= max_retries:
                     raise LLMRetriableError(message, status_code=status_code) from e
-                wait = min(2 ** attempt, 8)
+                # Add jitter so concurrent subtitle/segmentation workers don't retry in lockstep.
+                wait = min(2 ** attempt, 8) + random.uniform(0, 0.5)
                 if self.logger:
                     self.logger.warning(
                         f"DeepSeek API 暂时不可用，{wait}s 后重试 "
